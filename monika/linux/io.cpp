@@ -106,7 +106,7 @@ typedef struct haiku_fd_set
     }
 
 #define CHECK_FD_AND_PATH(fd, str)                              \
-    if (fd == HAIKU_AT_FDCWD)                                   \
+    if (HAIKU_IS_AT_FDCWD(fd))                                  \
     {                                                           \
         CHECK_NON_NULL_EMPTY_STRING_AND_RETURN(str, B_ENTRY_NOT_FOUND);  \
     }                                                           \
@@ -420,7 +420,7 @@ status_t _moni_write_stat(int fd, const char* path,
 
     status_t result;
 
-    if (fd != HAIKU_AT_FDCWD && path == NULL)
+    if (!HAIKU_IS_AT_FDCWD(fd) && path == NULL)
     {
         if (statMask & B_STAT_MODE)
         {
@@ -509,7 +509,7 @@ status_t _moni_write_stat(int fd, const char* path,
 
 int _moni_open(int fd, const char* path, int openMode, int perms)
 {
-    if (fd == HAIKU_AT_FDCWD)
+    if (HAIKU_IS_AT_FDCWD(fd))
     {
         CHECK_NON_NULL_EMPTY_STRING_AND_RETURN(path, HAIKU_POSIX_ENOENT);
     }
@@ -811,7 +811,7 @@ int _moni_unlink(int fd, const char* path)
 
 int _moni_open_dir(int fd, const char* path)
 {
-    if (fd == HAIKU_AT_FDCWD)
+    if (HAIKU_IS_AT_FDCWD(fd))
     {
         CHECK_NON_NULL_EMPTY_STRING_AND_RETURN(path, HAIKU_POSIX_ENOENT);
     }
@@ -881,7 +881,7 @@ status_t _moni_rewind_dir(int fd)
 
 haiku_off_t _moni_seek(int fd, off_t pos, int seekType)
 {
-    if (fd == HAIKU_AT_FDCWD)
+    if (HAIKU_IS_AT_FDCWD(fd))
     {
         fd = AT_FDCWD;
     }
@@ -1082,7 +1082,7 @@ status_t _moni_setcwd(int fd, const char* path)
 {
     // path can be null with a positive fd, this happens
     // in the implementation of fchdir.
-    if (fd == HAIKU_AT_FDCWD)
+    if (HAIKU_IS_AT_FDCWD(fd))
     {
         CHECK_NULL_AND_RETURN_BAD_ADDRESS(path);
         CHECK_NON_NULL_EMPTY_STRING_AND_RETURN(path, B_ENTRY_NOT_FOUND);

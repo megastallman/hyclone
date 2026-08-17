@@ -332,7 +332,7 @@ status_t Process::ReadDirFd(int fd, const void* userBuffer, size_t userBufferSiz
 
     if (path[0] != '/')
     {
-        if (fd != HAIKU_AT_FDCWD)
+        if (!HAIKU_IS_AT_FDCWD(fd))
         {
             if (!IsValidFd(fd))
             {
@@ -648,7 +648,7 @@ intptr_t server_hserver_call_setcwd(hserver_context& context, int fd, const char
         {
             // respectChroot = false is only internally used by `haiku_loader`
             // on startup.
-            if (fd != HAIKU_AT_FDCWD)
+            if (!HAIKU_IS_AT_FDCWD(fd))
             {
                 return B_BAD_VALUE;
             }

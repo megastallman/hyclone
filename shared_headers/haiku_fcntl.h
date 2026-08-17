@@ -55,7 +55,11 @@
 #define HAIKU_O_DIRECTORY     0x00200000    /* fail if not a directory */
 
 /* flags for the *at() functions */
-#define HAIKU_AT_FDCWD        (-1)          /* CWD FD for the *at() functions */
+#define HAIKU_AT_FDCWD        (-100)        /* CWD FD for the *at() functions */
+
+/* Haiku's AT_FDCWD used to be -1. The kernel still accepts the old value for
+   compatibility with older binaries (see vfs.cpp), and so must HyClone. */
+#define HAIKU_IS_AT_FDCWD(fd) ((fd) == HAIKU_AT_FDCWD || (fd) == -1)
 
 #define HAIKU_AT_SYMLINK_NOFOLLOW 0x01      /* fstatat(), fchmodat(), fchownat(), \
                                                utimensat() */
