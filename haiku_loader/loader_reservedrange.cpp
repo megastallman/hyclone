@@ -111,6 +111,7 @@ void loader_unregister_reserved_range(void* address, size_t size)
                 newRangeMappingAddress,
                 newRangeMappingSize
             });
+            ++oldRangeMappingsIt;
         }
         sReservedRanges.emplace(std::make_pair(newRange, std::move(newRangeMappings)));
     }
@@ -141,7 +142,7 @@ void loader_map_reserved_range(void* address, size_t size)
     bool deletePrev = false;
 
     auto mappingsIt = rangeMappings.upper_bound(RangeInfo { (uint8_t*)address, SIZE_MAX });
-    if (mappingsIt->address == (uint8_t*)address + size)
+    if (mappingsIt != rangeMappings.end() && mappingsIt->address == (uint8_t*)address + size)
     {
         newMapping.size += mappingsIt->size;
         deleteNext = true;
