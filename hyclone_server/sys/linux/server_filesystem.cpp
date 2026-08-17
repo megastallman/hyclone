@@ -16,7 +16,16 @@ bool server_setup_prefix()
         std::filesystem::copy_options::overwrite_existing);
     std::filesystem::copy_file("/etc/hosts", networkSettingsPath / "hosts",
         std::filesystem::copy_options::overwrite_existing);
-    std::filesystem::copy_file("/etc/resolv.conf", networkSettingsPath / "resolv.conf",
+    // On systemd-resolved hosts, /etc/resolv.conf points at a local stub
+    // resolver (127.0.0.53) that Haiku's netresolv fails to query, breaking
+    // all guest DNS resolution. Prefer the real upstream nameserver list
+    // maintained by systemd-resolved when it is available.
+    std::filesystem::path hostResolvConf = "/run/systemd/resolve/resolv.conf";
+    if (!std::filesystem::exists(hostResolvConf))
+    {
+        hostResolvConf = "/etc/resolv.conf";
+    }
+    std::filesystem::copy_file(hostResolvConf, networkSettingsPath / "resolv.conf",
         std::filesystem::copy_options::overwrite_existing);
 
     std::filesystem::path etcPath = systemPath / "etc";
