@@ -56,6 +56,7 @@ bool server_setup_filesystem()
     vfsService.RegisterBuiltinFilesystem("packagefs", PackagefsDevice::Mount);
     vfsService.RegisterBuiltinFilesystem("systemfs", SystemfsDevice::Mount);
     vfsService.RegisterBuiltinFilesystem("bindfs", BindfsDevice::Mount);
+    vfsService.RegisterBuiltinFilesystem("ramfs", RamfsDevice::Mount);
 
     if (!server_setup_prefix())
     {

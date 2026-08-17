@@ -45,6 +45,7 @@ add_executable(hyclone_server
     fs/devfs.cpp
     fs/hostfs.cpp
     fs/packagefs.cpp
+    fs/ramfs.cpp
     fs/rootfs.cpp
     fs/systemfs.cpp
 

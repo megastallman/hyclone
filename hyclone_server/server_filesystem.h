@@ -6,6 +6,7 @@
 #include "fs/bindfs.h"
 #include "fs/devfs.h"
 #include "fs/packagefs.h"
+#include "fs/ramfs.h"
 #include "fs/rootfs.h"
 #include "fs/systemfs.h"
 
