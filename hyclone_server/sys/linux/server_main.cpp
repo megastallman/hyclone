@@ -99,6 +99,7 @@ int server_main(int argc, char **argv)
 
     daemon(0, 0);
     freopen((std::filesystem::path(gHaikuPrefix) / ".hyclone.log").c_str(), "w", stderr);
+    setvbuf(stderr, NULL, _IONBF, 0);
 
     std::vector<pollfd> pollfds;
     pollfds.push_back({listen_socket, POLLIN, 0});
