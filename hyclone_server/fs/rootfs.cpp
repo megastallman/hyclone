@@ -33,6 +33,18 @@ RootfsDevice::RootfsDevice(const std::filesystem::path& hostRoot, uint32 mountFl
     std::filesystem::create_directory_symlink("boot/system/etc", etcPath);
     std::filesystem::remove(packagesPath);
     std::filesystem::create_directory_symlink("boot/system/package-links", packagesPath);
+
+    // Haiku's rootfs also provides /tmp, pointing into the system cache
+    // directory (which launch_daemon's InitTemporaryDirectoryJob creates
+    // and empties at boot).
+    auto tmpPath = hostRoot / "tmp";
+    std::error_code ec;
+    if (std::filesystem::is_symlink(tmpPath) || !std::filesystem::exists(tmpPath))
+    {
+        std::filesystem::remove(tmpPath, ec);
+        std::filesystem::create_directories(hostRoot / "boot/system/cache/tmp", ec);
+        std::filesystem::create_directory_symlink("boot/system/cache/tmp", tmpPath, ec);
+    }
 }
 
 bool RootfsDevice::_IsBlacklisted(const std::filesystem::path& hostPath) const
