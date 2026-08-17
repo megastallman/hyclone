@@ -184,31 +184,37 @@ void loader_unmap_reserved_range(void* address, size_t size)
     --it;
     auto& rangeMappings = it->second;
 
-    auto mappingsIt = rangeMappings.upper_bound(RangeInfo { (uint8_t*)address, SIZE_MAX });
+    uint8_t* beginAddress = (uint8_t*)address;
+    uint8_t* endAddress = beginAddress + size;
 
-    if (mappingsIt == rangeMappings.begin())
+    // Find the first mapping that could intersect [beginAddress, endAddress).
+    // The old code assumed the unmapped region was contained in a single
+    // mapping and, worse, when the region started past the end of the found
+    // mapping, it silently *grew* that mapping's bookkeeping instead of
+    // doing nothing.
+    auto mappingsIt = rangeMappings.upper_bound(RangeInfo { beginAddress, SIZE_MAX });
+    if (mappingsIt != rangeMappings.begin())
     {
-        // The reserved range exists, but the current area is not mapped.
-        // Similar to POSIX mmap, this should be a no-op.
-        return;
+        auto prevIt = std::prev(mappingsIt);
+        if (prevIt->address + prevIt->size > beginAddress)
+        {
+            mappingsIt = prevIt;
+        }
     }
 
-    assert(mappingsIt != rangeMappings.begin());
-    --mappingsIt;
-
-    auto oldRange = *mappingsIt;
-    rangeMappings.erase(oldRange);
-
-    if (oldRange.address < (uint8_t*)address)
+    while (mappingsIt != rangeMappings.end() && mappingsIt->address < endAddress)
     {
-        auto newRange = RangeInfo { oldRange.address, (size_t)((uint8_t*)address - oldRange.address) };
-        rangeMappings.insert(newRange);
-    }
-    if (oldRange.address + oldRange.size > (uint8_t*)address + size)
-    {
-        auto newRange =
-            RangeInfo { (uint8_t*)address + size, oldRange.address + oldRange.size - (uint8_t*)address - size };
-        rangeMappings.insert(newRange);
+        auto oldRange = *mappingsIt;
+        mappingsIt = rangeMappings.erase(mappingsIt);
+
+        if (oldRange.address < beginAddress)
+        {
+            rangeMappings.insert(RangeInfo { oldRange.address, (size_t)(beginAddress - oldRange.address) });
+        }
+        if (oldRange.address + oldRange.size > endAddress)
+        {
+            rangeMappings.insert(RangeInfo { endAddress, (size_t)(oldRange.address + oldRange.size - endAddress) });
+        }
     }
 }
 
@@ -323,6 +329,13 @@ size_t loader_reserved_range_longest_mappable_from(void* address, size_t maxSize
     }
 
     ++mappingsIt;
+    if (mappingsIt == rangeMappings.end())
+    {
+        // No mapping after `address`: mappable until the end of the
+        // reserved range. Dereferencing the end() iterator here used to
+        // read garbage and return bogus sizes.
+        return std::min(maxSize, (size_t)(it->first.address + it->first.size - (uint8_t*)address));
+    }
     return std::min(maxSize, (size_t)(mappingsIt->address - (uint8_t*)address));
 }
 
