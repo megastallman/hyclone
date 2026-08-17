@@ -1,6 +1,7 @@
 // Must be included before signal.h
 #include "haiku_signal.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <memory.h>
 #include <signal.h>
@@ -199,14 +200,34 @@ status_t _moni_get_team_usage_info(team_id team, int32 who, team_usage_info *inf
     return GET_HOSTCALLS()->get_process_usage(team, who, info);
 }
 
-status_t _moni_get_team_info(team_id id, haiku_team_info* info)
+status_t _moni_get_team_info(team_id id, haiku_team_info* info, size_t size)
 {
-    return GET_SERVERCALLS()->get_team_info(id, info);
+    haiku_team_info localInfo;
+    memset(&localInfo, 0, sizeof(localInfo));
+
+    status_t status = GET_SERVERCALLS()->get_team_info(id, &localInfo);
+    if (status != B_OK)
+    {
+        return status;
+    }
+
+    memcpy(info, &localInfo, std::min(size, sizeof(localInfo)));
+    return B_OK;
 }
 
-status_t _moni_get_next_team_info(int32 *cookie, haiku_team_info* info)
+status_t _moni_get_next_team_info(int32 *cookie, haiku_team_info* info, size_t size)
 {
-    return GET_SERVERCALLS()->get_next_team_info(cookie, info);
+    haiku_team_info localInfo;
+    memset(&localInfo, 0, sizeof(localInfo));
+
+    status_t status = GET_SERVERCALLS()->get_next_team_info(cookie, &localInfo);
+    if (status != B_OK)
+    {
+        return status;
+    }
+
+    memcpy(info, &localInfo, std::min(size, sizeof(localInfo)));
+    return B_OK;
 }
 
 status_t _moni_get_extended_team_info(team_id teamID, uint32 flags,

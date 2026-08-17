@@ -17,6 +17,15 @@ typedef struct
     char args[64];
     haiku_uid_t uid;
     haiku_gid_t gid;
+
+    /* Haiku R1 extensions */
+    haiku_uid_t real_uid;
+    haiku_gid_t real_gid;
+    haiku_pid_t group_id;
+    haiku_pid_t session_id;
+    team_id parent;
+    char name[B_OS_NAME_LENGTH];
+    bigtime_t start_time;
 } haiku_team_info;
 
 #define B_CURRENT_TEAM	0

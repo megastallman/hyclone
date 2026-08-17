@@ -25,6 +25,8 @@
 bool loader_register_process(int argc, char** args)
 {
     haiku_team_info teamInfo;
+    memset(&teamInfo, 0, sizeof(teamInfo));
+    const char* programPath = (argc > 0) ? args[0] : nullptr;
     teamInfo.team = getpid();
     teamInfo.thread_count = 0;
     teamInfo.image_count = 0;
@@ -51,8 +53,21 @@ bool loader_register_process(int argc, char** args)
             break;
     }
 
-    teamInfo.uid = loader_hserver_call_uid_for(getuid());
-    teamInfo.gid = loader_hserver_call_gid_for(getgid());
+    teamInfo.uid = loader_hserver_call_uid_for(geteuid());
+    teamInfo.gid = loader_hserver_call_gid_for(getegid());
+
+    /* Haiku R1 extensions */
+    teamInfo.real_uid = loader_hserver_call_uid_for(getuid());
+    teamInfo.real_gid = loader_hserver_call_gid_for(getgid());
+    teamInfo.group_id = getpgid(0);
+    teamInfo.session_id = getsid(0);
+    teamInfo.parent = getppid();
+    if (programPath != nullptr)
+    {
+        const char* name = strrchr(programPath, '/');
+        strncpy(teamInfo.name, name ? name + 1 : programPath,
+            sizeof(teamInfo.name) - 1);
+    }
 
     return loader_hserver_call_register_team_info(&teamInfo) >= 0;
 }
