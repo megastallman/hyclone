@@ -67,7 +67,11 @@ void server_fill_team_info(haiku_team_info* info)
 {
     if (info->team == 0)
     {
-        info->team = getpid();
+        // A zeroed team_info corresponds to the synthetic kernel/system team.
+        // getpid() here would return hyclone_server's own pid, which is not a
+        // valid guest team id and makes get_team_info() fail (e.g. listimage
+        // reporting "invalid team" for the kernel).
+        info->team = B_SYSTEM_TEAM;
     }
 
     if (info->thread_count == 0)
