@@ -710,9 +710,20 @@ int _moni_normalize_path(const char* userPath, bool traverseLink, char* buffer)
     return B_OK;
 }
 
-int _moni_create_pipe(int *fds)
+int _moni_create_pipe(int *fds, int flags)
 {
-    long result = LINUX_SYSCALL2(__NR_pipe2, fds, 0);
+    // flags are Haiku O_* flags (pipe2 support): O_NONBLOCK, O_CLOEXEC.
+    int linuxFlags = 0;
+    if (flags & HAIKU_O_NONBLOCK)
+    {
+        linuxFlags |= 04000; // Linux O_NONBLOCK
+    }
+    if (flags & HAIKU_O_CLOEXEC)
+    {
+        linuxFlags |= 02000000; // Linux O_CLOEXEC
+    }
+
+    long result = LINUX_SYSCALL2(__NR_pipe2, fds, linuxFlags);
 
     if (result < 0)
     {
@@ -917,14 +928,17 @@ int _moni_dup(int fd)
     return result;
 }
 
-int _moni_dup2(int ofd, int nfd)
+int _moni_dup2(int ofd, int nfd, int flags)
 {
     if (GET_HOSTCALLS()->is_protected_fd(nfd))
     {
         return HAIKU_POSIX_EBADF;
     }
 
-    int result = LINUX_SYSCALL3(__NR_dup3, ofd, nfd, 0);
+    // The only flag supported by Haiku's _kern_dup2 (dup3) is O_CLOEXEC.
+    int linuxFlags = (flags & HAIKU_O_CLOEXEC) ? 02000000 /* O_CLOEXEC */ : 0;
+
+    int result = LINUX_SYSCALL3(__NR_dup3, ofd, nfd, linuxFlags);
 
     if (result < 0)
     {
@@ -1188,9 +1202,11 @@ status_t _moni_read_fs_info(haiku_dev_t device, struct haiku_fs_info *info)
     return GET_SERVERCALLS()->read_fs_info(device, info);
 }
 
-status_t _moni_fsync(int fd)
+status_t _moni_fsync(int fd, bool dataOnly)
 {
-    int status = LINUX_SYSCALL1(__NR_fsync, fd);
+    int status = dataOnly ?
+        LINUX_SYSCALL1(__NR_fdatasync, fd) :
+        LINUX_SYSCALL1(__NR_fsync, fd);
     if (status < 0)
     {
         return LinuxToB(-status);

@@ -43,6 +43,9 @@ typedef uint8_t haiku_sa_family_t;
 #define HAIKU_SOCK_SEQPACKET 5
 #define HAIKU_SOCK_MISC 255
 
+#define HAIKU_SOCK_NONBLOCK 0x00040000
+#define HAIKU_SOCK_CLOEXEC 0x00080000
+
 /* Socket options for SOL_SOCKET level */
 #define HAIKU_SOL_SOCKET -1
 

@@ -143,8 +143,19 @@ status_t _moni_listen(int socket, int backlog)
 }
 
 int _moni_accept(int socket, struct haiku_sockaddr *address,
-    haiku_socklen_t *_addressLength)
+    haiku_socklen_t *_addressLength, int flags)
 {
+    // Haiku SOCK_NONBLOCK/SOCK_CLOEXEC flags (accept4 support).
+    int linuxFlags = 0;
+    if (flags & HAIKU_SOCK_NONBLOCK)
+    {
+        linuxFlags |= 04000; // Linux SOCK_NONBLOCK (O_NONBLOCK)
+    }
+    if (flags & HAIKU_SOCK_CLOEXEC)
+    {
+        linuxFlags |= 02000000; // Linux SOCK_CLOEXEC (O_CLOEXEC)
+    }
+
     struct sockaddr_storage linuxAddressStorage;
     memset(&linuxAddressStorage, 0, sizeof(linuxAddressStorage));
     socklen_t linuxAddressLengthStorage = 0;
@@ -158,7 +169,7 @@ int _moni_accept(int socket, struct haiku_sockaddr *address,
         linuxAddressLength = &linuxAddressLengthStorage;
     }
 
-    long fd = LINUX_SYSCALL3(__NR_accept, socket, linuxAddress, linuxAddressLength);
+    long fd = LINUX_SYSCALL4(__NR_accept4, socket, linuxAddress, linuxAddressLength, linuxFlags);
 
     if (fd < 0)
     {
