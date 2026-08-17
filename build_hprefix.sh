@@ -83,7 +83,10 @@ HPREFIX_PACKAGES=$"$HPREFIX/boot/system/packages"
 HAIKU_DEPOT_BASE_URL="https://depot.haiku-os.org/__api/v2/pkg/get-pkg"
 HAIKU_HPKG_BASE_URL="https://eu.hpkg.haiku-os.org/haiku/master/$HAIKU_ARCH/current"
 HAIKU_SYSPACKAGES="haiku"
-HAIKU_PACKAGES="bash bzip2 ca_root_certificates coreutils expat fontconfig freetype gawk gcc_syslibs gettext_libintl graphite2 gzip harfbuzz icu74 intel_wifi_firmwares libedit libiconv libpng16 libsolv libxml2 ncurses6 noto noto_sans_cjk_jp openssl3 ralink_wifi_firmwares readline realtek_wifi_firmwares tar unzip zlib zstd"
+# Note: libsolv is no longer a separate HaikuPorts package: it has been
+# imported into the main Haiku repository and now ships with the "haiku"
+# system package.
+HAIKU_PACKAGES="bash bzip2 ca_root_certificates coreutils expat fontconfig freetype gawk gcc_syslibs gettext_libintl graphite2 gzip harfbuzz icu74 intel_wifi_firmwares libedit libiconv libpng16 libxml2 ncurses6 noto noto_sans_cjk_jp openssl3 ralink_wifi_firmwares readline realtek_wifi_firmwares tar unzip zlib zstd"
 HPKG_FORCE=${HPKG_FORCE:-"0"}
 
 HAIKU_ADDITIONAL_SYSPACKAGES=${HAIKU_ADDITIONAL_SYSPACKAGES//,/ }
@@ -149,6 +152,10 @@ for package in "${array[@]}"; do
     hpkgDownloadUrl="$(curl --retry $CURL_RETRY_COUNT -Ls --request POST \
         --data '{"name":"'"$package"'","repositorySourceCode":"haikuports_'$HAIKU_ARCH'","versionType":"LATEST","naturalLanguageCode":"en"}' \
         --header 'Content-Type:application/json' "$HAIKU_DEPOT_BASE_URL" | sed -n 's/^.*hpkgDownloadURL":"\([^"]*\)".*$/\1/p')"
+    if [ -z "$hpkgDownloadUrl" ]; then
+        echo "WARNING: could not resolve a download URL for package '$package', skipping." >&2
+        continue
+    fi
     hpkgVersion="$(echo "$hpkgDownloadUrl" | sed -n 's/^.*\/[^\/]*-\([^-]*\-[^-]*\)-[^-]*\.hpkg$/\1/p')"
     if [ "$HPKG_FORCE" == "0" ] && [ -f "$HPREFIX_PACKAGES/$package-$hpkgVersion-$HAIKU_ARCH.hpkg" ]; then
         echo "$package already exists"
