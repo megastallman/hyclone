@@ -31,9 +31,23 @@ int SocketFamilyBToLinux(int family)
 
 int SocketTypeBToLinux(int type)
 {
+    // Haiku allows SOCK_NONBLOCK/SOCK_CLOEXEC to be OR'ed into the type,
+    // like Linux (used by netresolv, accept4() users, etc).
+    int linuxFlags = 0;
+    if (type & HAIKU_SOCK_NONBLOCK)
+    {
+        linuxFlags |= SOCK_NONBLOCK;
+        type &= ~HAIKU_SOCK_NONBLOCK;
+    }
+    if (type & HAIKU_SOCK_CLOEXEC)
+    {
+        linuxFlags |= SOCK_CLOEXEC;
+        type &= ~HAIKU_SOCK_CLOEXEC;
+    }
+
     switch (type)
     {
-#define SUPPORTED_SOCKET_TYPE(name) case HAIKU_##name: return name;
+#define SUPPORTED_SOCKET_TYPE(name) case HAIKU_##name: return name | linuxFlags;
 #include "socket_values.h"
 #undef SUPPORTED_SOCKET_TYPE
         default:
@@ -44,9 +58,21 @@ int SocketTypeBToLinux(int type)
 
 int SocketTypeLinuxToB(int type)
 {
+    int haikuFlags = 0;
+    if (type & SOCK_NONBLOCK)
+    {
+        haikuFlags |= HAIKU_SOCK_NONBLOCK;
+        type &= ~SOCK_NONBLOCK;
+    }
+    if (type & SOCK_CLOEXEC)
+    {
+        haikuFlags |= HAIKU_SOCK_CLOEXEC;
+        type &= ~SOCK_CLOEXEC;
+    }
+
     switch (type)
     {
-#define SUPPORTED_SOCKET_TYPE(name) case name: return HAIKU_##name;
+#define SUPPORTED_SOCKET_TYPE(name) case name: return HAIKU_##name | haikuFlags;
 #include "socket_values.h"
 #undef SUPPORTED_SOCKET_TYPE
         default:
