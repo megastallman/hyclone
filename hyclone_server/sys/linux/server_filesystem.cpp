@@ -42,8 +42,6 @@ bool server_setup_prefix()
 void server_replace_libroot(const std::filesystem::path& target)
 {
     auto oldPermissions = std::filesystem::status(target).permissions();
-    std::filesystem::permissions(target, std::filesystem::perms::owner_write,
-        std::filesystem::perm_options::add);
 
     std::filesystem::path hostServerPath = std::filesystem::canonical("/proc/self/exe");
     std::filesystem::path hostInstallPrefix = hostServerPath.parent_path().parent_path();
@@ -56,8 +54,38 @@ void server_replace_libroot(const std::filesystem::path& target)
         std::cerr << "HyClone may not work correctly without the correct custom libroot.so" << std::endl;
     }
 
-    std::filesystem::copy_file(hostLibrootPath, target,
-        std::filesystem::copy_options::overwrite_existing);
+    // The target may be mmap'ed by running guest processes (every one of
+    // them maps libroot.so). copy_file(overwrite_existing) truncates and
+    // rewrites the file in place, which yanks the pages out from under
+    // those mappings and makes running processes crash on garbage reads
+    // (this fired on every package activation). Copy to a temporary file
+    // and atomically rename() it over the target instead: existing
+    // mappings keep the old inode, new processes get the new file.
+    std::filesystem::path tempPath = target;
+    tempPath += ".hyclone.tmp";
 
-    std::filesystem::permissions(target, oldPermissions);
+    // The extracted lib directory is read-only; make it writable while we
+    // create the temporary file and rename it into place.
+    auto dirPermissions = std::filesystem::status(target.parent_path()).permissions();
+    std::filesystem::permissions(target.parent_path(),
+        std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
+
+    std::error_code ec;
+    std::filesystem::remove(tempPath, ec);
+    std::filesystem::copy_file(hostLibrootPath, tempPath, ec);
+    if (ec)
+    {
+        std::cerr << "Failed to stage libroot.so replacement: " << ec.message() << std::endl;
+        std::filesystem::permissions(target.parent_path(), dirPermissions);
+        return;
+    }
+    std::filesystem::permissions(tempPath, oldPermissions);
+    std::filesystem::rename(tempPath, target, ec);
+    if (ec)
+    {
+        std::cerr << "Failed to replace libroot.so: " << ec.message() << std::endl;
+        std::filesystem::remove(tempPath, ec);
+    }
+
+    std::filesystem::permissions(target.parent_path(), dirPermissions);
 }
