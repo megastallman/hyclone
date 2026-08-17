@@ -69,7 +69,9 @@ struct hostcalls
     // Mutex
     int (*mutex_lock)(int32_t* mutex, const char* name, uint32_t flags, int64_t timeout);
     int (*mutex_unblock)(int32_t* mutex, uint32_t flags);
-    int (*mutex_switch_lock)(int32_t* fromMutex, int32_t* toMutex, const char* name, uint32_t flags, int64_t timeout);
+    int (*mutex_switch_lock)(int32_t* fromMutex, uint32_t fromFlags, int32_t* toMutex, const char* name, uint32_t toFlags, int64_t timeout);
+    int (*mutex_sem_acquire)(int32_t* sem, const char* name, uint32_t flags, int64_t timeout);
+    int (*mutex_sem_release)(int32_t* sem, uint32_t flags);
 
     // Semaphore
     int (*realtime_sem_open)(const char *name, int openFlagsOrShared, haiku_mode_t mode, uint32_t semCount, haiku_sem_t* sem, haiku_sem_t** usedSem);

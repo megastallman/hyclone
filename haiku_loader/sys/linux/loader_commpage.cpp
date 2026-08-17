@@ -111,6 +111,8 @@ void* loader_allocate_commpage()
     hostcalls_ptr->mutex_lock = loader_mutex_lock;
     hostcalls_ptr->mutex_unblock = loader_mutex_unblock;
     hostcalls_ptr->mutex_switch_lock = loader_mutex_switch_lock;
+    hostcalls_ptr->mutex_sem_acquire = loader_mutex_sem_acquire;
+    hostcalls_ptr->mutex_sem_release = loader_mutex_sem_release;
 
     hostcalls_ptr->realtime_sem_open = loader_realtime_sem_open;
 

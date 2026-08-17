@@ -117,10 +117,21 @@ status_t _moni_mutex_unblock(int32* mutex, uint32 flags)
     return GET_HOSTCALLS()->mutex_unblock(mutex, flags);
 }
 
-status_t _moni_mutex_switch_lock(int32* fromMutex, int32* toMutex,
-    const char* name, uint32 flags, bigtime_t timeout)
+status_t _moni_mutex_switch_lock(int32* fromMutex, uint32 fromFlags,
+    int32* toMutex, const char* name, uint32 toFlags, bigtime_t timeout)
 {
-    return GET_HOSTCALLS()->mutex_switch_lock(fromMutex, toMutex, name, flags, timeout);
+    return GET_HOSTCALLS()->mutex_switch_lock(fromMutex, fromFlags, toMutex, name, toFlags, timeout);
+}
+
+status_t _moni_mutex_sem_acquire(int32* sem, const char* name, uint32 flags,
+    bigtime_t timeout)
+{
+    return GET_HOSTCALLS()->mutex_sem_acquire(sem, name, flags, timeout);
+}
+
+status_t _moni_mutex_sem_release(int32* sem, uint32 flags)
+{
+    return GET_HOSTCALLS()->mutex_sem_release(sem, flags);
 }
 
 sem_id _moni_create_sem(int count, const char *name)
