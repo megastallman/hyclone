@@ -10,17 +10,45 @@
 extern "C"
 {
 
-haiku_gid_t _moni_getgid(bool effective)
+// Haiku replaced the _kern_get[ug]id/_kern_setre[ug]id syscalls with
+// _kern_getres[ug]id/_kern_setres[ug]id (hrev57917).
+// The HyClone server does not track saved IDs yet, so the saved ID is
+// approximated with the effective one.
+status_t _moni_getresgid(haiku_gid_t* rgid, haiku_gid_t* egid, haiku_gid_t* sgid)
 {
-    return GET_SERVERCALLS()->getgid(effective);
+    if (rgid != NULL)
+    {
+        *rgid = GET_SERVERCALLS()->getgid(false);
+    }
+    if (egid != NULL)
+    {
+        *egid = GET_SERVERCALLS()->getgid(true);
+    }
+    if (sgid != NULL)
+    {
+        *sgid = GET_SERVERCALLS()->getgid(true);
+    }
+    return B_OK;
 }
 
-haiku_uid_t _moni_getuid(bool effective)
+status_t _moni_getresuid(haiku_uid_t* ruid, haiku_uid_t* euid, haiku_uid_t* suid)
 {
-    return GET_SERVERCALLS()->getuid(effective);
+    if (ruid != NULL)
+    {
+        *ruid = GET_SERVERCALLS()->getuid(false);
+    }
+    if (euid != NULL)
+    {
+        *euid = GET_SERVERCALLS()->getuid(true);
+    }
+    if (suid != NULL)
+    {
+        *suid = GET_SERVERCALLS()->getuid(true);
+    }
+    return B_OK;
 }
 
-status_t _moni_setregid(haiku_gid_t rgid, haiku_gid_t egid,
+static status_t _moni_setregid(haiku_gid_t rgid, haiku_gid_t egid,
     bool setAllIfPrivileged)
 {
     intptr_t hostrgid = -1;
@@ -52,7 +80,7 @@ status_t _moni_setregid(haiku_gid_t rgid, haiku_gid_t egid,
     return B_OK;
 }
 
-status_t _moni_setreuid(haiku_uid_t ruid, haiku_uid_t euid,
+static status_t _moni_setreuid(haiku_uid_t ruid, haiku_uid_t euid,
     bool setAllIfPrivileged)
 {
     intptr_t hostruid = -1;
@@ -82,6 +110,30 @@ status_t _moni_setreuid(haiku_uid_t ruid, haiku_uid_t euid,
     }
 
     return B_OK;
+}
+
+status_t _moni_setresgid(haiku_gid_t rgid, haiku_gid_t egid, haiku_gid_t sgid,
+    bool setAllIfPrivileged)
+{
+    // The saved ID is not tracked by the HyClone server yet.
+    (void)sgid;
+    if (rgid == (haiku_gid_t)-1 && egid == (haiku_gid_t)-1)
+    {
+        return B_OK;
+    }
+    return _moni_setregid(rgid, egid, setAllIfPrivileged);
+}
+
+status_t _moni_setresuid(haiku_uid_t ruid, haiku_uid_t euid, haiku_uid_t suid,
+    bool setAllIfPrivileged)
+{
+    // The saved ID is not tracked by the HyClone server yet.
+    (void)suid;
+    if (ruid == (haiku_uid_t)-1 && euid == (haiku_uid_t)-1)
+    {
+        return B_OK;
+    }
+    return _moni_setreuid(ruid, euid, setAllIfPrivileged);
 }
 
 haiku_ssize_t _moni_getgroups(int groupCount, haiku_gid_t* groupList)
