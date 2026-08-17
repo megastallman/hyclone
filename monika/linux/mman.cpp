@@ -855,6 +855,11 @@ int _moni_map_file(const char *name, void **address,
 
 int _moni_resize_area(int32_t area, size_t newSize)
 {
+    // The lock must be taken before reading the area info: otherwise a
+    // concurrent resize of the same area can make `info.size` stale, and
+    // the mremap below would operate on wrong bounds.
+    MmanLock mmanLock;
+
     struct haiku_area_info info;
     long status = GET_SERVERCALLS()->get_area_info(area, &info);
 
@@ -862,8 +867,6 @@ int _moni_resize_area(int32_t area, size_t newSize)
     {
         return status;
     }
-
-    MmanLock mmanLock;
 
     if (newSize == info.size)
     {
@@ -1075,6 +1078,7 @@ int ProcessMmapArgs(void* address, uint32 addressSpec, size_t& size,
         {
             addr_t randnum;
             long status = LINUX_SYSCALL3(__NR_getrandom, &randnum, sizeof(addr_t), 0);
+           
             if (status < 0)
             {
                 return LinuxToB(-status);
