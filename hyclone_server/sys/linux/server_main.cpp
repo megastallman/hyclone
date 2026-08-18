@@ -98,15 +98,22 @@ int server_main(int argc, char **argv)
     // Should be safe as we blocked SIGPIPE.
     read(pipefd[0], &pid, sizeof(pid));
 
-    // Warm up app_server at boot. app_server is normally started on demand
-    // by the first app_server client, but its start-up broadcast
-    // (kMsgAppServerStarted via the registrar) then hits already-running
-    // BApplications like package_daemon at arbitrary moments, occasionally
-    // making their _ReconnectToServer() abort. Running one trivial client
-    // right after boot moves that cold start (and the broadcast) to a time
-    // when nothing is mid-transaction. Declaring app_server as a launch
-    // service would be cleaner, but launch_daemon-declared service launches
-    // currently wedge under HyClone, while this on-demand path is proven.
+    // Warm up the guest system right after boot by running one trivial
+    // client. This kicks off the user session daemon, app_server (owned by
+    // the session daemon via /system/data/user_launch/user), and the system
+    // daemons - most importantly package_daemon - at boot time rather than
+    // when the user's first command arrives.
+    //
+    // This matters because of an upstream Haiku race: Root::RegisterVolume
+    // makes a volume visible to requests immediately but only *queues*
+    // _InitPackages on the "job runner" thread, and Volume::_GetActivePackages
+    // assigns fActiveState without holding fLock. A pkgman request
+    // (B_MESSAGE_GET_INSTALLATION_LOCATION_INFO) arriving while the volume is
+    // still initializing makes Volume::HandleGetLocationInfoRequest
+    // dereference a NULL/torn fActiveState and crash package_daemon. On real
+    // Haiku the init window is negligible; under HyClone it spans seconds.
+    // Starting the daemons at boot lets that window close before any real
+    // workload shows up.
     int warmupPid = fork();
     if (warmupPid == 0)
     {
