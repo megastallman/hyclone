@@ -20,6 +20,7 @@ set(monika_sources
     stringutils.cpp
 
     debug.cpp
+    event_queue.cpp
     disk.cpp
     fcntl.cpp
     generic.cpp
