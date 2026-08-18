@@ -104,6 +104,16 @@ void loader_build_args(uint8*& mem, user_space_program_args &args, char **argv, 
 	}
 	size_t pathArgSize = loader_build_path(NULL, 0, expandPath) + 1;
 	size_t homeArgSize = loader_build_home(NULL, 0) + 1;
+
+	// HyClone has no display hardware, so app_server can only drive remote
+	// screens (Haiku's RemoteHWInterface, selected by the TARGET_SCREEN
+	// environment variable holding a TCP port). Default it to Haiku
+	// RemoteDesktop's standard port so that the default desktop comes up
+	// headless instead of app_server failing to initialize - which used to
+	// make every BApplication abort in _ReconnectToServer().
+	static const char kDefaultTargetScreen[] = "TARGET_SCREEN=10900";
+	bool hasTargetScreen = false;
+
 	for (size_t i = 0; i < envCnt; ++i)
     {
 		if (strncmp(env[i], "PATH=", sizeof("PATH=") - 1) == 0)
@@ -116,15 +126,26 @@ void loader_build_args(uint8*& mem, user_space_program_args &args, char **argv, 
 		}
 		else
 		{
+			if (strncmp(env[i], "TARGET_SCREEN=", sizeof("TARGET_SCREEN=") - 1) == 0)
+			{
+				hasTargetScreen = true;
+			}
 			argSize += strlen(env[i]) + 1;
 		}
 	}
 
-	size_t memSize = sizeof(void*)*(argCnt + envCnt + 2) + argSize;
+	size_t outEnvCnt = envCnt;
+	if (!hasTargetScreen)
+	{
+		argSize += sizeof(kDefaultTargetScreen);
+		outEnvCnt++;
+	}
+
+	size_t memSize = sizeof(void*)*(argCnt + outEnvCnt + 2) + argSize;
 	memSize = (memSize + B_PAGE_SIZE - 1) & ~(B_PAGE_SIZE - 1);
 	mem = (uint8_t*)aligned_alloc(B_PAGE_SIZE, memSize);
 	char **outArgs = (char**)&mem[0];
-	char *outChars = (char*)&mem[sizeof(void*)*(argCnt + envCnt + 2)];
+	char *outChars = (char*)&mem[sizeof(void*)*(argCnt + outEnvCnt + 2)];
 	for (size_t i = 0; i < argCnt; ++i)
     {
 		size_t len = strlen(argv[i]) + 1;
@@ -158,6 +179,13 @@ void loader_build_args(uint8*& mem, user_space_program_args &args, char **argv, 
 		}
 	}
 
+	if (!hasTargetScreen)
+	{
+		*outArgs = outChars; outArgs++;
+		memcpy(outChars, kDefaultTargetScreen, sizeof(kDefaultTargetScreen));
+		outChars += sizeof(kDefaultTargetScreen);
+	}
+
 	*outArgs = NULL; outArgs++;
 
 	char buf[B_PATH_NAME_LENGTH];
@@ -167,7 +195,7 @@ void loader_build_args(uint8*& mem, user_space_program_args &args, char **argv, 
 
 	args.error_port = -1;
 	args.arg_count = argCnt;
-	args.env_count = envCnt;
+	args.env_count = outEnvCnt;
 	args.args = (char**)&mem[0];
 	args.env = (char**)&mem[0] + (argCnt + 1);
 }
