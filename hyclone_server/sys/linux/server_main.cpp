@@ -11,6 +11,7 @@
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -96,6 +97,47 @@ int server_main(int argc, char **argv)
     close(pipefd[1]);
     // Should be safe as we blocked SIGPIPE.
     read(pipefd[0], &pid, sizeof(pid));
+
+    // Warm up app_server at boot. app_server is normally started on demand
+    // by the first app_server client, but its start-up broadcast
+    // (kMsgAppServerStarted via the registrar) then hits already-running
+    // BApplications like package_daemon at arbitrary moments, occasionally
+    // making their _ReconnectToServer() abort. Running one trivial client
+    // right after boot moves that cold start (and the broadcast) to a time
+    // when nothing is mid-transaction. Declaring app_server as a launch
+    // service would be cleaner, but launch_daemon-declared service launches
+    // currently wedge under HyClone, while this on-demand path is proven.
+    int warmupPid = fork();
+    if (warmupPid == 0)
+    {
+        int devnull = open("/dev/null", O_RDWR);
+        if (devnull >= 0)
+        {
+            dup2(devnull, 0);
+            dup2(devnull, 1);
+            dup2(devnull, 2);
+        }
+
+        for (int attempt = 0; attempt < 10; ++attempt)
+        {
+            sleep(3);
+            int clientPid = fork();
+            if (clientPid == 0)
+            {
+                const char* warmArgv[] =
+                    {haikuLoaderPath.c_str(), "/bin/screenmode", NULL};
+                execv(haikuLoaderPath.c_str(), (char* const*)warmArgv);
+                _exit(1);
+            }
+            int wstatus = 0;
+            if (waitpid(clientPid, &wstatus, 0) == clientPid
+                && WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0)
+            {
+                _exit(0);
+            }
+        }
+        _exit(1);
+    }
 
     daemon(0, 0);
     freopen((std::filesystem::path(gHaikuPrefix) / ".hyclone.log").c_str(), "w", stderr);
