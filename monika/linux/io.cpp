@@ -34,6 +34,7 @@
 #include "linux_version.h"
 #include "realpath.h"
 #include "signal_conversion.h"
+#include "syscall_restart.h"
 #include "stringutils.h"
 
 /* access modes */
@@ -132,16 +133,22 @@ ssize_t _moni_write(int fd, haiku_off_t pos, const void* buffer, size_t bufferSi
 
     if (pos == -1)
     {
-        bytesWritten = LINUX_SYSCALL3(__NR_write, fd, buffer, bufferSize);
+        bytesWritten = restartable_syscall([&] {
+            return (long)LINUX_SYSCALL3(__NR_write, fd, buffer, bufferSize);
+        });
     }
     else
     {
-        bytesWritten = LINUX_SYSCALL4(__NR_pwrite64, fd, buffer, bufferSize, pos);
+        bytesWritten = restartable_syscall([&] {
+            return (long)LINUX_SYSCALL4(__NR_pwrite64, fd, buffer, bufferSize, pos);
+        });
         if (bytesWritten == -ESPIPE)
         {
             // On Haiku, write_pos ignores the `pos` parameter for non-seekable devices
             // instead of returning an error.
-            bytesWritten = LINUX_SYSCALL3(__NR_write, fd, buffer, bufferSize);
+            bytesWritten = restartable_syscall([&] {
+                return (long)LINUX_SYSCALL3(__NR_write, fd, buffer, bufferSize);
+            });
         }
     }
 
@@ -175,12 +182,16 @@ ssize_t _moni_writev(int fd, haiku_off_t pos, const struct haiku_iovec *vecs, si
 
     if (pos == -1)
     {
-        bytesWritten = LINUX_SYSCALL3(__NR_writev, fd, linuxVecs, count);
+        bytesWritten = restartable_syscall([&] {
+            return (long)LINUX_SYSCALL3(__NR_writev, fd, linuxVecs, count);
+        });
     }
     else
     {
         // Last two params: Low and high order bytes of pos.
-        bytesWritten = LINUX_SYSCALL5(__NR_pwritev, fd, linuxVecs, count, (uint32_t)pos, ((uint64_t)pos) >> 32);
+        bytesWritten = restartable_syscall([&] {
+            return (long)LINUX_SYSCALL5(__NR_pwritev, fd, linuxVecs, count, (uint32_t)pos, ((uint64_t)pos) >> 32);
+        });
         if (bytesWritten == -ESPIPE)
         {
             bytesWritten = LINUX_SYSCALL3(__NR_writev, fd, linuxVecs, count);
@@ -203,14 +214,20 @@ ssize_t _moni_read(int fd, haiku_off_t pos, void* buffer, size_t bufferSize)
 
     if (pos == -1)
     {
-        bytesRead = LINUX_SYSCALL3(__NR_read, fd, buffer, bufferSize);
+        bytesRead = restartable_syscall([&] {
+            return (long)LINUX_SYSCALL3(__NR_read, fd, buffer, bufferSize);
+        });
     }
     else
     {
-        bytesRead = LINUX_SYSCALL4(__NR_pread64, fd, buffer, bufferSize, pos);
+        bytesRead = restartable_syscall([&] {
+            return (long)LINUX_SYSCALL4(__NR_pread64, fd, buffer, bufferSize, pos);
+        });
         if (bytesRead == -ESPIPE)
         {
-            bytesRead = LINUX_SYSCALL3(__NR_read, fd, buffer, bufferSize);
+            bytesRead = restartable_syscall([&] {
+                return (long)LINUX_SYSCALL3(__NR_read, fd, buffer, bufferSize);
+            });
         }
     }
 
@@ -244,12 +261,16 @@ ssize_t _moni_readv(int fd, off_t pos, const struct haiku_iovec *vecs, size_t co
 
     if (pos == -1)
     {
-        bytesRead = LINUX_SYSCALL3(__NR_readv, fd, linuxVecs, count);
+        bytesRead = restartable_syscall([&] {
+            return (long)LINUX_SYSCALL3(__NR_readv, fd, linuxVecs, count);
+        });
     }
     else
     {
         // Last two params: Low and high order bytes of pos.
-        bytesRead = LINUX_SYSCALL5(__NR_preadv, fd, linuxVecs, count, (uint32_t)pos, ((uint64_t)pos) >> 32);
+        bytesRead = restartable_syscall([&] {
+            return (long)LINUX_SYSCALL5(__NR_preadv, fd, linuxVecs, count, (uint32_t)pos, ((uint64_t)pos) >> 32);
+        });
         if (bytesRead == -ESPIPE)
         {
             bytesRead = LINUX_SYSCALL3(__NR_readv, fd, linuxVecs, count);
@@ -1000,8 +1021,10 @@ ssize_t _moni_select(int numfds,
 
     struct linux_pselect_arg linuxSigMaskArg = { linuxSigMask, sizeof(linuxSigMaskMemory) };
 
-    long result =
-        LINUX_SYSCALL6(__NR_pselect6, numfds, linuxReadSet, linuxWriteSet, linuxErrorSet, &linuxTimeout, &linuxSigMaskArg);
+    long result = restartable_syscall([&] {
+        return (long)LINUX_SYSCALL6(__NR_pselect6, numfds, linuxReadSet, linuxWriteSet,
+            linuxErrorSet, &linuxTimeout, &linuxSigMaskArg);
+    });
 
     if (result < 0)
     {
@@ -1075,7 +1098,10 @@ ssize_t _moni_poll(struct haiku_pollfd *fds, int numFDs,
     linuxTimeout.tv_sec = timeout / 1000000;
     linuxTimeout.tv_nsec = (timeout % 1000000) * 1000;
 
-    long status = LINUX_SYSCALL5(__NR_ppoll, linuxFds, numFDs, &linuxTimeout, linuxSigMask, sizeof(linuxSigMaskMemory));
+    long status = restartable_syscall([&] {
+        return (long)LINUX_SYSCALL5(__NR_ppoll, linuxFds, numFDs, &linuxTimeout,
+            linuxSigMask, sizeof(linuxSigMaskMemory));
+    });
 
     if (status < 0)
     {

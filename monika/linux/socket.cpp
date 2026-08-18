@@ -14,6 +14,7 @@
 #include "linux_debug.h"
 #include "linux_syscall.h"
 #include "socket_conversion.h"
+#include "syscall_restart.h"
 
 static int SendMessageFlagsBToLinux(int flags);
 static int TcpOptionBToLinux(int options);
@@ -120,7 +121,9 @@ status_t _moni_connect(int socket, const struct haiku_sockaddr *address, haiku_s
         return HAIKU_POSIX_ENOSYS;
     }
 
-    long status = LINUX_SYSCALL3(__NR_connect, socket, (struct sockaddr *)&linuxAddress, length);
+    long status = restartable_syscall([&] {
+        return (long)LINUX_SYSCALL3(__NR_connect, socket, (struct sockaddr *)&linuxAddress, length);
+    });
 
     if (status < 0)
     {
@@ -169,7 +172,9 @@ int _moni_accept(int socket, struct haiku_sockaddr *address,
         linuxAddressLength = &linuxAddressLengthStorage;
     }
 
-    long fd = LINUX_SYSCALL4(__NR_accept4, socket, linuxAddress, linuxAddressLength, linuxFlags);
+    long fd = restartable_syscall([&] {
+        return (long)LINUX_SYSCALL4(__NR_accept4, socket, linuxAddress, linuxAddressLength, linuxFlags);
+    });
 
     if (fd < 0)
     {
@@ -222,8 +227,10 @@ ssize_t _moni_recvfrom(int socket, void *data, size_t length, int flags,
 
     int linuxFlags = SendMessageFlagsBToLinux(flags);
 
-    long bytesReceived = LINUX_SYSCALL6(__NR_recvfrom, socket, data, length,
-        linuxFlags, linuxAddress, linuxAddressLength);
+    long bytesReceived = restartable_syscall([&] {
+        return (long)LINUX_SYSCALL6(__NR_recvfrom, socket, data, length,
+            linuxFlags, linuxAddress, linuxAddressLength);
+    });
 
     if (bytesReceived < 0)
     {
@@ -276,8 +283,10 @@ ssize_t _moni_sendto(int socket, const void *data, size_t length,
 
     int linuxFlags = SendMessageFlagsBToLinux(flags);
 
-    long bytesSent = LINUX_SYSCALL6(__NR_sendto, socket, data, length,
-        linuxFlags, linuxAddress, linuxAddressLength);
+    long bytesSent = restartable_syscall([&] {
+        return (long)LINUX_SYSCALL6(__NR_sendto, socket, data, length,
+            linuxFlags, linuxAddress, linuxAddressLength);
+    });
 
     if (bytesSent < 0)
     {
@@ -296,7 +305,9 @@ ssize_t _moni_send(int socket, const void *data, size_t length, int flags)
     //   is equivalent to
     // sendto(sockfd, buf, len, flags, NULL, 0);
     // LINUX_SYSCALLX macros automatically zeros out unused parameters for us.
-    long status = LINUX_SYSCALL4(__NR_sendto, socket, data, length, linuxFlags);
+    long status = restartable_syscall([&] {
+        return (long)LINUX_SYSCALL4(__NR_sendto, socket, data, length, linuxFlags);
+    });
 
     if (status < 0)
     {

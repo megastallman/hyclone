@@ -118,6 +118,8 @@ void* loader_allocate_commpage()
 
     hostcalls_ptr->get_sigrtmin = loader_get_sigrtmin;
     hostcalls_ptr->get_sigrtmax = loader_get_sigrtmax;
+    hostcalls_ptr->notify_guest_signal = loader_notify_guest_signal;
+    hostcalls_ptr->guest_signal_count = loader_guest_signal_count;
 
     hostcalls_ptr->is_debugger_present = loader_is_debugger_present;
     hostcalls_ptr->debugger_pre_syscall = loader_debugger_pre_syscall;

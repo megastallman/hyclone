@@ -79,6 +79,14 @@ struct hostcalls
     // Signals
     int (*get_sigrtmin)();
     int (*get_sigrtmax)();
+    // Called by monika's signal trampolines whenever a guest-installed
+    // signal handler runs. Together with guest_signal_count(), this lets
+    // monika distinguish syscalls interrupted by guest-visible signals
+    // (which must return B_INTERRUPTED, like on Haiku) from ones
+    // interrupted by HyClone's internal signals (which must be restarted
+    // transparently).
+    void (*notify_guest_signal)();
+    uint64_t (*guest_signal_count)();
 
     // Debugger
     bool (*is_debugger_present)();

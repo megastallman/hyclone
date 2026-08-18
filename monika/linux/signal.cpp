@@ -294,6 +294,8 @@ void SigHandlerTrampoline(int signal)
 {
     typedef void (haiku_internal_sighandler_t)(int, void*, vregs*);
 
+    GET_HOSTCALLS()->notify_guest_signal();
+
     signal = SignalLinuxToB(signal);
 
     haiku_internal_sighandler_t *handler = (haiku_internal_sighandler_t*)
@@ -316,6 +318,8 @@ void SigActionTrampoline(int signal, siginfo_t* siginfo, void* context)
     char buffer[1024];
     buffer[0] = '/';
 #pragma GCC diagnostic pop
+
+    GET_HOSTCALLS()->notify_guest_signal();
 
     const ucontext_t* linuxContext = (const ucontext_t*)context;
     signal = SignalLinuxToB(signal);

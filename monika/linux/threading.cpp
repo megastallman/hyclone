@@ -1,4 +1,5 @@
 #include <cstring>
+#include <errno.h>
 #include <time.h>
 
 #include "BeDefs.h"
@@ -218,7 +219,27 @@ status_t _moni_snooze_etc(bigtime_t time, int timebase, int32 flags, bigtime_t* 
     linuxRequest.tv_sec = time / 1000000;
     linuxRequest.tv_nsec = (time % 1000000) * 1000;
 
-    long status = LINUX_SYSCALL4(__NR_clock_nanosleep, linuxClockid, linuxFlags, &linuxRequest, &linuxRemaining);
+    linuxRemaining = linuxRequest;
+
+    long status;
+    while (true)
+    {
+        uint64_t guestSignalCount = GET_HOSTCALLS()->guest_signal_count();
+
+        status = LINUX_SYSCALL4(__NR_clock_nanosleep, linuxClockid, linuxFlags, &linuxRequest, &linuxRemaining);
+
+        if (status != -EINTR || GET_HOSTCALLS()->guest_signal_count() != guestSignalCount)
+        {
+            break;
+        }
+
+        // Interrupted by HyClone-internal machinery; keep sleeping.
+        // For relative sleeps, continue with the remaining time.
+        if (!(linuxFlags & TIMER_ABSTIME))
+        {
+            linuxRequest = linuxRemaining;
+        }
+    }
 
     if (_remainingTime != NULL)
     {
