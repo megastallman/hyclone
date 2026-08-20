@@ -182,6 +182,47 @@ status_t _moni_realtime_sem_open(const char* name, int openFlagsOrShared,
     return 0;
 }
 
+status_t _moni_get_thread_affinity(thread_id id, void* userMask, size_t size)
+{
+    if (userMask == NULL || size == 0)
+    {
+        return B_BAD_VALUE;
+    }
+
+    // Guest thread IDs are host thread IDs under HyClone. id == 0 or the
+    // calling thread's own ID both work with Linux's calling-convention of 0.
+    long status = LINUX_SYSCALL3(__NR_sched_getaffinity, id, size, userMask);
+    if (status < 0)
+    {
+        return LinuxToB(-status);
+    }
+
+    // Linux returns the kernel cpumask size; zero out the rest of the
+    // caller's buffer.
+    if ((size_t)status < size)
+    {
+        memset((char*)userMask + status, 0, size - status);
+    }
+
+    return B_OK;
+}
+
+status_t _moni_set_thread_affinity(thread_id id, const void* userMask, size_t size)
+{
+    if (userMask == NULL || size == 0)
+    {
+        return B_BAD_VALUE;
+    }
+
+    long status = LINUX_SYSCALL3(__NR_sched_setaffinity, id, size, userMask);
+    if (status < 0)
+    {
+        return LinuxToB(-status);
+    }
+
+    return B_OK;
+}
+
 status_t _moni_snooze_etc(bigtime_t time, int timebase, int32 flags, bigtime_t* _remainingTime)
 {
     int linuxClockid;

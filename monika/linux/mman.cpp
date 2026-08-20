@@ -853,6 +853,44 @@ int _moni_map_file(const char *name, void **address,
     return areaId;
 }
 
+status_t _moni_memory_advice(void* address, size_t size, uint32 advice)
+{
+    // Haiku MADV_* values (headers/posix/sys/mman.h) differ from Linux's.
+    int linuxAdvice;
+    switch (advice)
+    {
+        case 1: // MADV_NORMAL
+            linuxAdvice = MADV_NORMAL;
+            break;
+        case 2: // MADV_SEQUENTIAL
+            linuxAdvice = MADV_SEQUENTIAL;
+            break;
+        case 3: // MADV_RANDOM
+            linuxAdvice = MADV_RANDOM;
+            break;
+        case 4: // MADV_WILLNEED
+            linuxAdvice = MADV_WILLNEED;
+            break;
+        case 5: // MADV_DONTNEED
+            linuxAdvice = MADV_DONTNEED;
+            break;
+        case 6: // MADV_FREE
+            linuxAdvice = MADV_FREE;
+            break;
+        default:
+            return B_BAD_VALUE;
+    }
+
+    long status = LINUX_SYSCALL3(__NR_madvise, address, size, linuxAdvice);
+    if (status < 0)
+    {
+        // Advice is only advisory; do not fail hard on ranges Linux
+        // dislikes (e.g. spanning unmapped holes).
+        return B_OK;
+    }
+    return B_OK;
+}
+
 int _moni_resize_area(int32_t area, size_t newSize)
 {
     // The lock must be taken before reading the area info: otherwise a
@@ -917,24 +955,31 @@ int _moni_resize_area(int32_t area, size_t newSize)
             mappableSize =
                 GET_HOSTCALLS()->reserved_range_longest_mappable_from((uint8_t*)info.address + info.size, newSize - info.size);
 
-            status = LINUX_SYSCALL2(__NR_munmap, (uint8_t*)info.address + info.size, mappableSize);
-            GET_HOSTCALLS()->map_reserved_range((uint8_t*)info.address + info.size, mappableSize);
-
-            if (status < 0)
+            if (mappableSize != 0)
             {
-                GET_SERVERCALLS()->resize_area(area, info.size);
-                return LinuxToB(-status);
+                status = LINUX_SYSCALL2(__NR_munmap, (uint8_t*)info.address + info.size, mappableSize);
+                GET_HOSTCALLS()->map_reserved_range((uint8_t*)info.address + info.size, mappableSize);
+
+                if (status < 0)
+                {
+                    GET_SERVERCALLS()->resize_area(area, info.size);
+                    return LinuxToB(-status);
+                }
             }
         }
         status = LINUX_SYSCALL3(__NR_mremap, info.address, info.size, newSize);
 
         if (status < 0)
         {
-            if (isInReservedRange)
+            if (isInReservedRange && mappableSize != 0)
             {
                 LINUX_SYSCALL6(__NR_mmap, (uint8_t*)info.address + info.size, mappableSize, PROT_NONE,
                     MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-                GET_HOSTCALLS()->unmap_reserved_range((uint8_t*)info.address + info.size, newSize - info.size);
+                // Only the mappable prefix was taken from the reserved range
+                // above; unmapping (newSize - info.size) could reach past the
+                // end of the reserved range and trip the loader's bookkeeping
+                // assertions.
+                GET_HOSTCALLS()->unmap_reserved_range((uint8_t*)info.address + info.size, mappableSize);
             }
             GET_SERVERCALLS()->resize_area(area, info.size);
             return LinuxToB(-status);
