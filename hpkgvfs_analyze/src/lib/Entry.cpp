@@ -711,7 +711,7 @@ namespace HpkgVfs
             {
                 if (c->_type == std::filesystem::file_type::directory)
                 {
-                    c->WriteToDisk(path);
+                    c->WriteToDisk(path, writer);
                 }
             }
 
@@ -744,7 +744,11 @@ namespace HpkgVfs
 
             for (const auto& kvp: _children)
             {
-                kvp.second.front()->WriteToDisk(path);
+                // Pass the writer down: the one-argument overload would
+                // silently fall back to the base EntryWriter, bypassing
+                // custom writers (extended attributes, owners, times) for
+                // everything below the root entry.
+                kvp.second.front()->WriteToDisk(path, writer);
             }
 
             _updatedChildren.clear();
