@@ -92,22 +92,62 @@ the real stack: GET_DESCRIPTION -> GET/SET_ENABLED_CHANNELS -> SET/GET_GLOBAL_FO
 -> GET_BUFFERS (2 x 2048 x 2ch) -> LIST_MIX_CONTROLS. A MultiAudioNode is created
 in media_server.
 
-ROOT CAUSE FOUND (2026-09-12, via a traced media_server): the media stack fully
-recognizes the device -- our MultiAudioNode is created, discovered, probed, and is
-the default audio output (verified with a BMediaRoster probe: GetAudioOutput
-returns "HyClone Virtual Audio", GetLiveNodes lists it). The blocker is NOT the
-audio driver. It is HyClone cross-team media PORT MESSAGING during node connection:
-DefaultManager::_ConnectMixerToOutput (and BSoundPlayer::_Init) send connection
-messages (write_port) to node control ports across teams, and these intermittently
-return B_BAD_PORT_ID -- the target port is not in the server registry at that
-instant -- or block. It is timing-dependent (a race): some runs BSoundPlayer::_Init
-returns "General system error" (what cmus/ocp would surface as "can't open audio"),
-some runs it hangs in the BSoundPlayer constructor. Port ids are globally unique
-(System::_ports IdMap), so it is not an id collision; it is a registration/visibility
-timing race, the same family as the launch_roster cross-team port hang. This is the
-next thing to fix -- in HyClone's port layer, not the media code. Tooling: media_server
-can be built standalone with tracing via the cross-compiler (see the recipe note in
-memory); -DDEBUG=2 turns on the DefaultManager TRACE that pinpointed this.
+ROOT CAUSE (2026-09-12, refined via instrumented media_server AND media_addon_server):
+the media stack fully recognizes the device -- our MultiAudioNode is created,
+discovered, probed, and is the default audio output (verified with a BMediaRoster
+probe: GetAudioOutput returns "HyClone Virtual Audio", GetLiveNodes lists it). The
+blocker is NOT the audio driver.
+
+The primary observable failure is that **media_addon_server's team dies during a
+client's BSoundPlayer connect**. media_addon_server owns three nodes -- the System
+clock (time source), the Audio Mixer, and our HyClone Virtual Audio output -- so when
+its team goes away, NodeManager::CleanupTeam removes ALL THREE, and from that point
+every audio client's GetAudioMixer returns B_ERROR ("can't open audio"). A probe app
+seeing "nodes=0" afterwards is downstream of this collapse. The death reproduces
+reliably: right after the client (sptest, a minimal BSoundPlayer) does GetClone
+AUDIO_MIXER and registers its producer node, media_addon_server tears down.
+
+What was ruled OUT by instrumentation (do not re-chase these):
+- NOT media_server quitting it. A traced media_server (fprintf markers in ReadyToRun,
+  QuitRequested, _QuitAddOnServer) shows _QuitAddOnServer runs ONCE at startup
+  (running=0) and is NOT called at the moment of death. media_server only reacts to
+  the death afterwards: it receives B_SOME_APP_QUIT ('BRAQ' = 1112686929) from the
+  registrar and runs CleanupTeam. media_server is the only code in the whole tree
+  that sends B_QUIT_REQUESTED to the addon server, and it does not send it here.
+- NOT a catchable signal to media_addon_server. A rebuilt media_addon_server that
+  installs handlers for signals 1..31 (except KILL/STOP) and logs to
+  /boot/home/mas_debug.log recorded NO signal and NO QuitRequested at death.
+- NOT the launch method. Controlled test: the STOCK media_addon_server dies whether
+  media_server launches it by signature (be_roster->Launch(SIGNATURE)) OR by path
+  (Launch(entry_ref of /boot/system/servers/media_addon_server)). An earlier
+  "by-path fixes it" reading was a deploy-confound artifact and is WRONG.
+
+What it IS: a timing-sensitive race in the cross-team connect path. The decisive
+control -- the STOCK addon server dies reliably during the connect, but a rebuilt
+media_addon_server (same libmedia.so, only different -O/instrumentation) reliably
+SURVIVES the same connect across many iterations. So instrumentation perturbs timing
+enough to win the race. The hyclone_server side shows an orderly per-thread teardown
+of the addon team (main thread's connection closes first), with no explicit
+server-issued team-kill -- consistent with the guest process exiting on its own down
+a path the stock build's timing hits and the slower build does not. This is the same
+family as the launch_roster cross-team port race; the fix belongs in HyClone's
+port/thread-disconnect layer, not the media code.
+
+Second, independent blocker: even when the addon server SURVIVES (rebuilt binary),
+the connect itself never completes -- the client hangs in the BSoundPlayer
+constructor. So there are two problems on the connect path: (a) the addon-team death
+race, and (b) the connect handshake not completing. Both must be solved before audio
+flows.
+
+Tooling recipe (reusable): the media servers can be built standalone with the Haiku
+cross-compiler at generated.x86_64/cross-tools-x86_64/bin/x86_64-unknown-haiku-g++.
+Compile with `-I src/servers/media[_addon] -I src/kits/media -I headers` + every
+headers/os subdir + the headers/private/* set, `-idirafter headers/posix
+headers/glibc`, `-include BeBuild.h`. Link with `-B<glue>/` (crti/crtn/start_dyn/
+init_term_dyn.o) and `-L$HPREFIX/boot/system/lib -lbe -lmedia [-lgame] -lroot`.
+Deploy to /boot/home (writable; /boot/system is read-only packagefs) and have
+media_server launch it from there. Note: HyClone process/proc bookkeeping is noisy
+-- enumerate real guests by argv[0] endswith bin/haiku_loader, not substring match.
 
 Phase 3 (PipeWire) is unblocked only after the connection race is fixed, since no
 buffers flow until the mixer connects to the node.
