@@ -195,6 +195,52 @@ status_t _moni_ioctl(int fd, uint32 op, void* buffer, size_t length)
             }
             return B_OK;
         }
+        case HAIKU_TCFLSH:
+        {
+            int arg = (int)(intptr_t)buffer;
+            int linuxArg;
+            switch (arg)
+            {
+                case HAIKU_TCIFLUSH:
+                    linuxArg = TCIFLUSH;
+                    break;
+                case HAIKU_TCOFLUSH:
+                    linuxArg = TCOFLUSH;
+                    break;
+                case HAIKU_TCIOFLUSH:
+                    linuxArg = TCIOFLUSH;
+                    break;
+                default:
+                    return B_BAD_VALUE;
+            }
+            int result = LINUX_SYSCALL3(__NR_ioctl, fd, TCFLSH, linuxArg);
+            if (result < 0)
+            {
+                return LinuxToB(-result);
+            }
+            return B_OK;
+        }
+        case HAIKU_TIOCSCTTY:
+        {
+            // Haiku's tty driver ignores the argument. On Linux it is the
+            // "steal" flag; a guest is a real host session leader after
+            // setsid(), so a plain request gives the Haiku semantics.
+            int result = LINUX_SYSCALL3(__NR_ioctl, fd, TIOCSCTTY, 0);
+            if (result < 0)
+            {
+                return LinuxToB(-result);
+            }
+            return B_OK;
+        }
+        case HAIKU_TIOCGSID:
+        {
+            int result = LINUX_SYSCALL3(__NR_ioctl, fd, TIOCGSID, buffer);
+            if (result < 0)
+            {
+                return LinuxToB(-result);
+            }
+            return B_OK;
+        }
         case HAIKU_SIOCGIFDSTADDR:
         case HAIKU_SIOCGIFFLAGS:
         case HAIKU_SIOCGIFNETMASK:
@@ -357,7 +403,7 @@ status_t _moni_ioctl(int fd, uint32 op, void* buffer, size_t length)
         //STUB_IOCTL(TCSETAW);
         STUB_IOCTL(TCWAITEVENT);
         STUB_IOCTL(TCSBRK);
-        STUB_IOCTL(TCFLSH);
+        //STUB_IOCTL(TCFLSH);
         //STUB_IOCTL(TCXONC);
         STUB_IOCTL(TCQUERYCONNECTED);
         STUB_IOCTL(TCGETBITS);
@@ -368,14 +414,14 @@ status_t _moni_ioctl(int fd, uint32 op, void* buffer, size_t length)
         STUB_IOCTL(TCVTIME);
         //STUB_IOCTL(TIOCGPGRP);
         //STUB_IOCTL(TIOCSPGRP);
-        STUB_IOCTL(TIOCSCTTY);
+        //STUB_IOCTL(TIOCSCTTY);
         STUB_IOCTL(TIOCMGET);
         STUB_IOCTL(TIOCMSET);
         STUB_IOCTL(TIOCSBRK);
         STUB_IOCTL(TIOCCBRK);
         STUB_IOCTL(TIOCMBIS);
         STUB_IOCTL(TIOCMBIC);
-        STUB_IOCTL(TIOCGSID);
+        //STUB_IOCTL(TIOCGSID);
         default:
         {
             // These are driver-specific ioctls.

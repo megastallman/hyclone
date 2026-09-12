@@ -315,7 +315,17 @@ void SiginfoLinuxToB(const siginfo_t &linuxSiginfo, haiku_siginfo_t &siginfo)
     haiku_siginfo_set_si_pid(siginfo, linuxSiginfo.si_pid);
     haiku_siginfo_set_si_uid(siginfo, linuxSiginfo.si_uid);
     haiku_siginfo_set_si_addr(siginfo, (void *)linuxSiginfo.si_addr);
-    haiku_siginfo_set_si_status(siginfo, linuxSiginfo.si_status);
+    // For SIGCHLD, si_status is an exit code only for CLD_EXITED. For every
+    // other code it is the signal that killed, stopped or continued the child,
+    // and libroot's waitpid() turns it into WTERMSIG()/WSTOPSIG(), so it has
+    // to be a Haiku signal number. mc, for one, checks WSTOPSIG() == SIGSTOP.
+    int siStatus = linuxSiginfo.si_status;
+    if (linuxSiginfo.si_signo == SIGCHLD && linuxSiginfo.si_code != CLD_EXITED
+        && siStatus > 0)
+    {
+        siStatus = SignalLinuxToB(siStatus);
+    }
+    haiku_siginfo_set_si_status(siginfo, siStatus);
     // We'll support this when we implement _kern_poll
     if ((linuxSiginfo.si_signo == SIGPOLL || linuxSiginfo.si_signo == SIGIO)
         && linuxSiginfo.si_band)
