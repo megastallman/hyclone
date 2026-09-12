@@ -295,4 +295,16 @@ status_t _moni_snooze_etc(bigtime_t time, int timebase, int32 flags, bigtime_t* 
     return B_OK;
 }
 
+bigtime_t _moni_estimate_max_scheduling_latency(thread_id thread)
+{
+    // Haiku's kernel estimates this from the scheduler and clamps it to the
+    // active scheduler mode's maximum latency (a few milliseconds). HyClone
+    // has no such scheduler, so return a fixed, conservative estimate. The
+    // media_kit adds this to node latencies to size buffers; a value in the
+    // low-milliseconds range keeps latency reasonable while staying large
+    // enough to absorb the host Linux scheduler's jitter without underruns.
+    (void)thread;
+    return 5000; // microseconds
+}
+
 }
