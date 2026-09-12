@@ -793,8 +793,15 @@ namespace HpkgVfs
                     std::filesystem::perms::owner_write,
                     std::filesystem::perm_options::add |
                     std::filesystem::perm_options::nofollow, _);
-                std::filesystem::remove(path);
             }
+            // Remove unconditionally right before recreating. The `exists`
+            // flag was sampled once at the top of WriteToDisk and can be
+            // stale by now: during a package upgrade the same path may have
+            // been (re)created earlier in this same extraction pass (e.g. a
+            // versioned .so symlink whose target changed). Relying on the
+            // stale flag skipped the remove and left create_symlink to throw
+            // an uncaught "File exists", aborting the whole server mid-upgrade.
+            std::filesystem::remove(path, _);
             if (std::filesystem::is_directory(targetPath, _))
             {
                 std::filesystem::create_directory_symlink(targetPath, path);
