@@ -27,6 +27,7 @@ set(monika_sources
     image.cpp
     io.cpp
     ioctl.cpp
+    hmulti_audio.cpp
     ipc.cpp
     mman.cpp
     process.cpp

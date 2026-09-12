@@ -36,6 +36,9 @@
 #include "socket_conversion.h"
 #include "stringutils.h"
 
+// Implemented in hmulti_audio.cpp: services virtual sound-driver ioctls.
+extern "C" bool _moni_hmulti_audio_ioctl(int fd, uint32 op, void* buffer, size_t length, status_t* result);
+
 #define B_IOCTL_GET_TTY_INDEX (HAIKU_TCGETA + 32) /* param is int32* */
 #define B_IOCTL_GRANT_TTY     (HAIKU_TCGETA + 33) /* no param (cf. grantpt()) */
 
@@ -428,6 +431,16 @@ status_t _moni_ioctl(int fd, uint32 op, void* buffer, size_t length)
             if (op > B_DEVICE_OP_CODES_END)
             {
                 return GET_SERVERCALLS()->ioctl(fd, op, buffer, length);
+            }
+            // Virtual hmulti_audio sound driver: its opcodes (8020+) fall below
+            // B_DEVICE_OP_CODES_END, so handle them in-process here rather than
+            // forwarding to the server. See monika/linux/hmulti_audio.cpp.
+            {
+                status_t audioResult;
+                if (_moni_hmulti_audio_ioctl(fd, op, buffer, length, &audioResult))
+                {
+                    return audioResult;
+                }
             }
             // Trace this, until we have better tools
             // such as strace on Hyclone.

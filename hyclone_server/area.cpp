@@ -478,6 +478,27 @@ intptr_t server_hserver_call_area_for(hserver_context& context, void* address)
     }
 }
 
+intptr_t server_hserver_call_find_area(hserver_context& context, const char* userName, size_t nameLength)
+{
+    std::string name(nameLength, '\0');
+
+    {
+        auto lock = context.process->Lock();
+        if (context.process->ReadMemory((void*)userName, name.data(), nameLength) != nameLength)
+        {
+            return B_BAD_ADDRESS;
+        }
+    }
+
+    // Trim at the first NUL so std::string compares work regardless of the
+    // caller's buffer length.
+    name.resize(strnlen(name.c_str(), name.size()));
+
+    auto& system = System::GetInstance();
+    auto lock = system.Lock();
+    return system.FindAreaByName(name);
+}
+
 intptr_t server_hserver_call_set_memory_protection(hserver_context& context, void* address, size_t size, unsigned int protection)
 {
     {

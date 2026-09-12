@@ -258,6 +258,17 @@ std::weak_ptr<Area> System::GetArea(int id)
     return it->second;
 }
 
+int System::FindAreaByName(const std::string& name)
+{
+    // Haiku's find_area returns the id of the first area with a matching name.
+    for (const auto& [id, area] : _areas)
+    {
+        if (name == area->GetInfo().name)
+            return id;
+    }
+    return B_NAME_NOT_FOUND;
+}
+
 size_t System::UnregisterArea(int id)
 {
     if (_areas.contains(id))

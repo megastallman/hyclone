@@ -994,6 +994,15 @@ area_id _moni_area_for(void *address)
     return GET_SERVERCALLS()->area_for(address);
 }
 
+area_id _moni_find_area(const char *name)
+{
+    if (name == NULL)
+    {
+        return B_BAD_VALUE;
+    }
+    return GET_SERVERCALLS()->find_area(name, strlen(name) + 1);
+}
+
 status_t _moni_get_area_info(area_id area, void* info)
 {
     return GET_SERVERCALLS()->get_area_info(area, info);

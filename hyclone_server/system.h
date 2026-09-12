@@ -100,6 +100,7 @@ public:
     std::weak_ptr<Area> RegisterArea(const haiku_area_info& info);
     std::weak_ptr<Area> RegisterArea(const std::shared_ptr<Area>& ptr);
     std::weak_ptr<Area> GetArea(int id);
+    int FindAreaByName(const std::string& name);
     bool IsValidAreaId(int id) const;
     size_t UnregisterArea(int id);
 

@@ -1,4 +1,5 @@
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -52,6 +53,26 @@ bool server_setup_filesystem()
     vfsService.RegisterDevice(std::make_shared<PackagefsDevice>("/" / homeDir / "config",
         std::filesystem::path(gHaikuPrefix) / homeDir / "config", PACKAGE_FS_MOUNT_TYPE_HOME));
     vfsService.RegisterDevice(std::make_shared<SystemfsDevice>());
+
+    // Virtual sound device: publish a leaf under /dev/audio/hmulti so Haiku's
+    // hmulti_audio media add-on discovers and probes it. /dev is a host
+    // passthrough, so back the mount with a real host directory in the prefix
+    // and mount it over /dev/audio/hmulti. The B_MULTI_* ioctls on the leaf are
+    // serviced in-process by monika (monika/linux/hmulti_audio.cpp); this mount
+    // only needs to make the node exist, open and enumerate.
+    {
+        std::filesystem::path audioHostDir = std::filesystem::path(gHaikuPrefix) / ".hyclone.audio";
+        std::error_code audioEc;
+        std::filesystem::create_directories(audioHostDir, audioEc);
+        // A single leaf node "0"; the add-on scans the directory and probes any
+        // non-directory entry (the leaf name is cosmetic).
+        std::filesystem::path leaf = audioHostDir / "0";
+        if (!std::filesystem::exists(leaf, audioEc))
+        {
+            std::ofstream(leaf.string()).close();
+        }
+        vfsService.RegisterDevice(std::make_shared<SystemfsDevice>("/dev/audio/hmulti", audioHostDir));
+    }
 
     vfsService.RegisterBuiltinFilesystem("packagefs", PackagefsDevice::Mount);
     vfsService.RegisterBuiltinFilesystem("systemfs", SystemfsDevice::Mount);

@@ -72,6 +72,34 @@ Minimum viable set to implement:
 Discovery: MultiAudioAddOn scans /dev/audio/hmulti/ recursively; any non-dir leaf
 that passes open+probe is used. Leaf name is cosmetic.
 
+## Status (2026-09-12)
+
+Phase 0 DONE: `_kern_estimate_max_scheduling_latency` implemented; media_server +
+media_addon_server pair up. Also implemented `_kern_find_area` (was a fatal stub
+the media_kit's shared BBufferGroups need).
+
+Phase 1 DONE: a virtual node is published at /dev/audio/hmulti/0 (SystemfsDevice
+mount over the host passthrough, backed by $HPREFIX/.hyclone.audio). The guest
+opens it and its B_MULTI_* ioctls (opcodes 8020+, which fall BELOW
+B_DEVICE_OP_CODES_END so monika does not forward them to the server) are serviced
+in-process by monika/linux/hmulti_audio.cpp.
+
+Phase 2 SUBSTANTIALLY DONE (null sink): the guest driver implements the full
+B_MULTI_* contract and paces B_MULTI_BUFFER_EXCHANGE against the monotonic clock
+(verified: 5 exchanges of 2048 frames @ 48 kHz took 213 ms). Haiku's hmulti_audio
+media add-on discovers and fully probes it -- the complete init sequence runs on
+the real stack: GET_DESCRIPTION -> GET/SET_ENABLED_CHANNELS -> SET/GET_GLOBAL_FORMAT
+-> GET_BUFFERS (2 x 2048 x 2ch) -> LIST_MIX_CONTROLS. A MultiAudioNode is created
+in media_server.
+
+REMAINING before audible/flowing playback: the playback connection does not yet
+complete -- driving an app (media_client test/play) does not start the
+BUFFER_EXCHANGE loop, and a "BBufferGroup: failed to allocate 0 bytes area" shows
+up during the mixer/soundplayer hookup. Next step: trace the mixer <-> MultiAudioNode
+connection and format/buffer-group negotiation (likely needs media_server built
+with symbols) to find where a zero buffer size comes from. Once buffers flow,
+Phase 3 swaps the null sink for a PipeWire stream.
+
 ## Phased plan
 
 0. Media servers run (DONE in part): `_kern_estimate_max_scheduling_latency`
