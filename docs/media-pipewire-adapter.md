@@ -92,13 +92,25 @@ the real stack: GET_DESCRIPTION -> GET/SET_ENABLED_CHANNELS -> SET/GET_GLOBAL_FO
 -> GET_BUFFERS (2 x 2048 x 2ch) -> LIST_MIX_CONTROLS. A MultiAudioNode is created
 in media_server.
 
-REMAINING before audible/flowing playback: the playback connection does not yet
-complete -- driving an app (media_client test/play) does not start the
-BUFFER_EXCHANGE loop, and a "BBufferGroup: failed to allocate 0 bytes area" shows
-up during the mixer/soundplayer hookup. Next step: trace the mixer <-> MultiAudioNode
-connection and format/buffer-group negotiation (likely needs media_server built
-with symbols) to find where a zero buffer size comes from. Once buffers flow,
-Phase 3 swaps the null sink for a PipeWire stream.
+ROOT CAUSE FOUND (2026-09-12, via a traced media_server): the media stack fully
+recognizes the device -- our MultiAudioNode is created, discovered, probed, and is
+the default audio output (verified with a BMediaRoster probe: GetAudioOutput
+returns "HyClone Virtual Audio", GetLiveNodes lists it). The blocker is NOT the
+audio driver. It is HyClone cross-team media PORT MESSAGING during node connection:
+DefaultManager::_ConnectMixerToOutput (and BSoundPlayer::_Init) send connection
+messages (write_port) to node control ports across teams, and these intermittently
+return B_BAD_PORT_ID -- the target port is not in the server registry at that
+instant -- or block. It is timing-dependent (a race): some runs BSoundPlayer::_Init
+returns "General system error" (what cmus/ocp would surface as "can't open audio"),
+some runs it hangs in the BSoundPlayer constructor. Port ids are globally unique
+(System::_ports IdMap), so it is not an id collision; it is a registration/visibility
+timing race, the same family as the launch_roster cross-team port hang. This is the
+next thing to fix -- in HyClone's port layer, not the media code. Tooling: media_server
+can be built standalone with tracing via the cross-compiler (see the recipe note in
+memory); -DDEBUG=2 turns on the DefaultManager TRACE that pinpointed this.
+
+Phase 3 (PipeWire) is unblocked only after the connection race is fixed, since no
+buffers flow until the mixer connects to the node.
 
 ## Phased plan
 

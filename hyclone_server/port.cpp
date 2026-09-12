@@ -568,12 +568,14 @@ intptr_t server_hserver_call_write_port_etc(hserver_context& context, port_id id
 
     if (!port)
     {
+        PortTrace(context, "WRITE id=%d code=%d -> BAD_PORT_ID (not found)", id, messageCode);
         return B_BAD_PORT_ID;
     }
 
     // Don't need to acquire a lock, a race here is harmless.
     if (port->IsClosed())
     {
+        PortTrace(context, "WRITE id=%d code=%d -> BAD_PORT_ID (closed)", id, messageCode);
         return B_BAD_PORT_ID;
     }
 
