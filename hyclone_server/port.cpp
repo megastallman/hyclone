@@ -14,6 +14,42 @@
 #include "server_workers.h"
 #include "system.h"
 
+#include <cstdarg>
+#include <cstdio>
+#include <ctime>
+#include <mutex>
+
+// Env-gated port tracing (set HYCLONE_PORT_TRACE=<path> to enable).
+// Logs the port lifecycle so a hang shows up as an "enter" with no
+// matching "exit"; correlate WRITE(id) against BUFSIZE/MSGINFO/READ(id).
+static FILE* gPortTraceFile = []() -> FILE*
+{
+    const char* path = getenv("HYCLONE_PORT_TRACE");
+    if (path == NULL || path[0] == '\0')
+        return NULL;
+    FILE* f = fopen(path, "w");
+    if (f != NULL)
+        setvbuf(f, NULL, _IONBF, 0);
+    return f;
+}();
+
+static void PortTrace(const hserver_context& context, const char* fmt, ...)
+{
+    if (gPortTraceFile == NULL)
+        return;
+    static std::mutex sLock;
+    std::lock_guard<std::mutex> guard(sLock);
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    fprintf(gPortTraceFile, "%ld.%06ld pid=%d tid=%d ",
+        (long)ts.tv_sec, ts.tv_nsec / 1000, context.pid, context.tid);
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(gPortTraceFile, fmt, args);
+    va_end(args);
+    fputc('\n', gPortTraceFile);
+}
+
 const int kSleepTimeMicroseconds = 100 * 1000; // 100ms, in microseconds.
 
 Port::Port(int pid, int capacity, const char* name)
@@ -216,6 +252,7 @@ intptr_t server_hserver_call_create_port(hserver_context& context, int32 queue_l
         context.process->AddOwningPort(id);
     }
 
+    PortTrace(context, "CREATE id=%d name=%s", id, buffer.c_str());
     return id;
 }
 
@@ -274,6 +311,7 @@ intptr_t server_hserver_call_delete_port(hserver_context& context, int portId)
         auto lock = system.Lock();
         system.UnregisterPort(portId);
     }
+    PortTrace(context, "DELETE id=%d name=%s", portId, port->GetName().c_str());
     return B_OK;
 }
 
@@ -293,9 +331,11 @@ intptr_t server_hserver_call_find_port(hserver_context& context, const char *por
 
         if (result < 0)
         {
+            PortTrace(context, "FIND name=%s -> NOT_FOUND", buffer.c_str());
             return B_NAME_NOT_FOUND;
         }
 
+        PortTrace(context, "FIND name=%s -> id=%d", buffer.c_str(), result);
         return result;
     }
 }
@@ -454,7 +494,11 @@ intptr_t server_hserver_call_port_buffer_size_etc(hserver_context& context, port
     haiku_port_message_info messageInfo;
     bool useTimeout = flags & B_TIMEOUT;
 
+    PortTrace(context, "BUFSIZE-enter id=%d queue=%d timeout=%s", id,
+        port->GetInfo().queue_count, useTimeout ? "yes" : "INFINITE");
     status_t status = port->GetMessageInfo(messageInfo, useTimeout ? timeout : B_INFINITE_TIMEOUT);
+    PortTrace(context, "BUFSIZE-exit  id=%d -> status=%d size=%d", id, (int)status,
+        status == B_OK ? (int)messageInfo.size : -1);
 
     if (status != B_OK)
     {
@@ -507,6 +551,7 @@ intptr_t server_hserver_call_set_port_owner(hserver_context& context, port_id id
         port->SetOwner(team);
     }
 
+    PortTrace(context, "SETOWNER id=%d team=%d", id, team);
     return B_OK;
 }
 
@@ -547,7 +592,10 @@ intptr_t server_hserver_call_write_port_etc(hserver_context& context, port_id id
 
     bool useTimeout = flags & B_TIMEOUT;
 
-    return port->Write(std::move(message), useTimeout ? timeout : B_INFINITE_TIMEOUT);
+    status_t writeStatus = port->Write(std::move(message), useTimeout ? timeout : B_INFINITE_TIMEOUT);
+    PortTrace(context, "WRITE id=%d code=%d size=%zu -> status=%d queue=%d",
+        id, messageCode, bufferSize, (int)writeStatus, port->GetInfo().queue_count);
+    return writeStatus;
 }
 
 intptr_t server_hserver_call_read_port_etc(hserver_context& context,
@@ -571,7 +619,9 @@ intptr_t server_hserver_call_read_port_etc(hserver_context& context,
 
     bool useTimeout = flags & B_TIMEOUT;
 
+    PortTrace(context, "READ-enter id=%d queue=%d", id, port->GetInfo().queue_count);
     status_t status = port->Read(message, useTimeout ? timeout : B_INFINITE_TIMEOUT);
+    PortTrace(context, "READ-exit  id=%d code=%d -> status=%d", id, message.code, (int)status);
 
     if (status != B_OK)
     {
@@ -616,7 +666,11 @@ intptr_t server_hserver_call_get_port_message_info_etc(hserver_context& context,
     haiku_port_message_info messageInfo;
     bool useTimeout = flags & B_TIMEOUT;
 
+    PortTrace(context, "MSGINFO-enter id=%d queue=%d timeout=%s", id,
+        port->GetInfo().queue_count, useTimeout ? "yes" : "INFINITE");
     status_t status = port->GetMessageInfo(messageInfo, useTimeout ? timeout : B_INFINITE_TIMEOUT);
+    PortTrace(context, "MSGINFO-exit  id=%d -> status=%d size=%d", id, (int)status,
+        status == B_OK ? (int)messageInfo.size : -1);
 
     if (status != B_OK)
     {
