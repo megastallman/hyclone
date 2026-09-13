@@ -114,7 +114,10 @@ int32_t _moni_create_area(const char *name, void **address,
 
     struct haiku_area_info info;
 
-    strlcpy(info.name, name, sizeof(info.name));
+    // create_area()/clone_area() accept a NULL name (unnamed area) on Haiku;
+    // guard against it so strlcpy() does not dereference NULL (crashes e.g.
+    // rtm_create_pool(), which passes name == NULL).
+    strlcpy(info.name, name != NULL ? name : "", sizeof(info.name));
     info.size = size;
     info.lock = lock;
     info.protection = protection;
@@ -242,7 +245,10 @@ area_id MONIKA_EXPORT _moni_clone_area(const char *name, void **address,
 
     struct haiku_area_info info;
 
-    strlcpy(info.name, name, sizeof(info.name));
+    // create_area()/clone_area() accept a NULL name (unnamed area) on Haiku;
+    // guard against it so strlcpy() does not dereference NULL (crashes e.g.
+    // rtm_create_pool(), which passes name == NULL).
+    strlcpy(info.name, name != NULL ? name : "", sizeof(info.name));
     info.size = size;
     info.lock = lock;
     info.protection = protection;
@@ -814,7 +820,10 @@ int _moni_map_file(const char *name, void **address,
 
     struct haiku_area_info info;
 
-    strlcpy(info.name, name, sizeof(info.name));
+    // create_area()/clone_area() accept a NULL name (unnamed area) on Haiku;
+    // guard against it so strlcpy() does not dereference NULL (crashes e.g.
+    // rtm_create_pool(), which passes name == NULL).
+    strlcpy(info.name, name != NULL ? name : "", sizeof(info.name));
     info.size = size;
     info.lock = 0;
     info.protection = protection;

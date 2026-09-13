@@ -92,6 +92,42 @@ the real stack: GET_DESCRIPTION -> GET/SET_ENABLED_CHANNELS -> SET/GET_GLOBAL_FO
 -> GET_BUFFERS (2 x 2048 x 2ch) -> LIST_MIX_CONTROLS. A MultiAudioNode is created
 in media_server.
 
+*** RESOLVED (2026-09-13) *** The media_addon_server crash-on-connect is FIXED.
+
+Root cause (found by an instrumented mixer add-on, checkpoint by checkpoint):
+media_addon_server was SIGSEGV'ing -- not exit()/debugger() as earlier guessed; it
+only looked "silent" because /proc/sys/kernel/print-fatal-signals is 0 so segfaults
+are not logged to dmesg. The fault chain, on the FIRST BSoundPlayer connect:
+  AudioMixer::Connected()
+    -> MixerCore::AddInput -> new MixerInput(...)
+      -> MixerInput::SetMixBufferFormat(48000, 2048)
+        -> rtm_create_pool(&pool, size)            [src/kits/media/RealtimeAlloc.cpp]
+          -> create_area(name == NULL, ...)        [rtm_create_pool passes NULL name]
+            -> _moni_create_area()                 [hyclone monika/linux/mman.cpp]
+              -> strlcpy(info.name, NULL, ...)      -> NULL deref -> SIGSEGV
+HyClone's strlcpy (monika/linux/stringutils.cpp) reads *src with no NULL check, and
+create_area()/clone_area()/reserve on Haiku legitimately accept a NULL (unnamed)
+area name -- rtm_create_pool relies on that. So ANY guest that creates an unnamed
+area crashed here, not just the mixer.
+
+Fix: NULL-guard the three `strlcpy(info.name, name, ...)` sites in _moni_create_area
+(monika/linux/mman.cpp) -> `name != NULL ? name : ""`. Rebuild libroot
+(`make root`), deploy to build/lib/libroot.so and $HPREFIX/boot/system/lib/libroot.so
+(the boot restores libroot from build/lib, so the fix must live there too).
+
+Verified: with the fix, media_addon_server SURVIVES the connect, AudioMixer::Connected()
+runs to completion, and sptest reports "BSoundPlayer InitCheck: No error" and keeps
+playing (buffers flow to the hmulti_audio null sink). media_server + media_addon_server
+stay healthy across repeated connects. This unblocks Phase 3 (PipeWire): the media_kit
+pipeline now connects and runs end-to-end (silently, into the null sink).
+
+Debug scaffolding used to find this (now reverted / removable): an instrumented
+mixer.media_addon with raw-write checkpoints, deployable from
+$HPREFIX/boot/home/config/non-packaged/add-ons/media/ (build kit kept in
+~/mixer_dbg_build/), and the SIGUSR1-armed hyclone_server port trace.
+
+--- historical analysis below (superseded in part by the RESOLVED section above) ---
+
 ROOT CAUSE (2026-09-12, refined via instrumented media_server AND media_addon_server):
 the media stack fully recognizes the device -- our MultiAudioNode is created,
 discovered, probed, and is the default audio output (verified with a BMediaRoster
