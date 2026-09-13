@@ -17,6 +17,7 @@
 #include <dlfcn.h>
 #include <map>
 #include <mutex>
+#include <unistd.h>
 #include <vector>
 
 #include <pulse/simple.h>
@@ -111,8 +112,22 @@ intptr_t server_hserver_call_audio_open(hserver_context& context,
     attr.minreq = (uint32_t)-1;
     attr.fragsize = (uint32_t)-1;
 
+    // libpulse locates the server via the PULSE_SERVER / XDG_RUNTIME_DIR environment,
+    // but hyclone_server is typically forked by haiku_loader without a desktop session's
+    // environment. When neither variable is set, fall back to the standard systemd
+    // per-user runtime socket so a PipeWire/PulseAudio session is reachable out of the box.
+    // A NULL server keeps libpulse's own discovery when the environment does provide a hint.
+    char serverPath[64];
+    const char* server = nullptr;
+    if (getenv("PULSE_SERVER") == nullptr && getenv("XDG_RUNTIME_DIR") == nullptr)
+    {
+        snprintf(serverPath, sizeof(serverPath),
+            "unix:/run/user/%u/pulse/native", (unsigned int)getuid());
+        server = serverPath;
+    }
+
     int error = 0;
-    pa_simple* stream = sNew(nullptr, "HyClone", PA_STREAM_PLAYBACK, nullptr,
+    pa_simple* stream = sNew(server, "HyClone", PA_STREAM_PLAYBACK, nullptr,
         "Haiku audio", &ss, nullptr, &attr, &error);
     if (stream == nullptr)
     {
