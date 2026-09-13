@@ -5,6 +5,7 @@
 #include <sys/un.h>
 
 #include "extended_commpage.h"
+#include "haiku_errors.h"
 #include "haiku_fcntl.h"
 #include "haiku_netinet_in.h"
 #include "linux_debug.h"
@@ -117,8 +118,13 @@ int SocketAddressBToLinux(const struct haiku_sockaddr *addr, haiku_socklen_t add
             }
             memcpy(path, haiku_un->sun_path, pathlen);
             path[pathlen] = '\0';
-            if (GET_SERVERCALLS()->vchroot_expandat(HAIKU_AT_FDCWD, path, pathlen,
-                false, hostPath, sizeof(hostPath)) != B_OK)
+            // vchroot_expandat still fills hostPath with the resolved host path
+            // when the entry does not exist yet (B_ENTRY_NOT_FOUND) -- which is
+            // the normal case for the path a bind() is about to create. Accept it
+            // and let the real bind()/connect() syscall report any actual error.
+            int expandStatus = GET_SERVERCALLS()->vchroot_expandat(HAIKU_AT_FDCWD,
+                path, pathlen, false, hostPath, sizeof(hostPath));
+            if (expandStatus != B_OK && expandStatus != B_ENTRY_NOT_FOUND)
             {
                 return -1;
             }
