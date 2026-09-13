@@ -51,6 +51,7 @@ struct AudioDevice
     bigtime_t startTime;    // system_time() when playback began
     int64 framesPlayed;
     int32 cycle;
+    bool audioOpen;         // host PulseAudio/PipeWire sink active for this device
 };
 
 static const int kMaxDevices = 8;
@@ -299,14 +300,48 @@ extern "C" bool _moni_hmulti_audio_ioctl(int fd, uint32 op, void* buffer, size_t
                 dev->startTime = GET_HOSTCALLS()->system_time();
                 dev->framesPlayed = 0;
                 dev->cycle = 0;
+                // Bring up the host audio sink (Phase 3). Falls back to the
+                // clock-paced null sink if unavailable.
+                dev->audioOpen = false;
+                if (GET_HOSTCALLS()->audio_open != NULL
+                    && GET_HOSTCALLS()->audio_open(kRateHz, kChannels,
+                        kSampleSize * 8) == B_OK)
+                {
+                    dev->audioOpen = true;
+                }
             }
 
-            // Advance one buffer worth of time and pace to it (drift-free:
-            // deadline is anchored to startTime, not to "now").
             dev->framesPlayed += kFramesPerBuffer;
-            bigtime_t deadline = dev->startTime
-                + (bigtime_t)dev->framesPlayed * 1000000 / kRateHz;
-            SleepUntil(deadline);
+
+            // The buffer ready to play now is the one the add-on filled during
+            // the previous exchange. Per the multi_audio protocol the add-on
+            // writes to buffer[(reported_cycle - 1) % N], so with N == 2 the
+            // ready buffer is buffer[dev->cycle] at this point.
+            const size_t bufferBytes =
+                (size_t)kFramesPerBuffer * kChannels * kSampleSize;
+
+            if (dev->audioOpen && dev->buffers != NULL)
+            {
+                // audio_write() blocks until the host sink accepts the data,
+                // which paces playback -- so we do NOT also SleepUntil here
+                // (that would double-pace and halve the effective rate).
+                const void* ready =
+                    (const char*)dev->buffers + (size_t)dev->cycle * bufferBytes;
+                if (GET_HOSTCALLS()->audio_write(ready, bufferBytes) != B_OK)
+                {
+                    // Host sink died mid-stream: drop to clock pacing.
+                    dev->audioOpen = false;
+                }
+            }
+
+            if (!dev->audioOpen)
+            {
+                // Null-sink fallback: pace to real time (drift-free: deadline
+                // anchored to startTime, not "now").
+                bigtime_t deadline = dev->startTime
+                    + (bigtime_t)dev->framesPlayed * 1000000 / kRateHz;
+                SleepUntil(deadline);
+            }
 
             info->played_real_time = GET_HOSTCALLS()->system_time();
             info->played_frames_count = dev->framesPlayed;
@@ -321,6 +356,11 @@ extern "C" bool _moni_hmulti_audio_ioctl(int fd, uint32 op, void* buffer, size_t
         }
         case B_MULTI_BUFFER_FORCE_STOP:
             dev->running = false;
+            if (dev->audioOpen && GET_HOSTCALLS()->audio_close != NULL)
+            {
+                GET_HOSTCALLS()->audio_close();
+                dev->audioOpen = false;
+            }
             *result = B_OK;
             return true;
         case B_MULTI_SET_START_TIME:
@@ -342,6 +382,9 @@ extern "C" void _moni_hmulti_audio_close(int fd)
     AudioDevice* dev = Find(fd);
     if (dev == NULL)
         return;
+    if (dev->audioOpen && GET_HOSTCALLS()->audio_close != NULL)
+        GET_HOSTCALLS()->audio_close();
+    dev->audioOpen = false;
     if (dev->buffers != NULL)
         LINUX_SYSCALL2(__NR_munmap, dev->buffers, dev->buffersSize);
     dev->fd = -1;

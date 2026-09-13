@@ -9,6 +9,7 @@
 #include "extended_commpage.h"
 #include "haiku_image.h"
 #include "haiku_tls.h"
+#include "loader_audio.h"
 #include "loader_debugger.h"
 #include "loader_exec.h"
 #include "loader_fork.h"
@@ -153,6 +154,10 @@ void* loader_allocate_commpage()
     hostcalls_ptr->at_exit = NULL;
     hostcalls_ptr->printf = loader_dprintf;
     hostcalls_ptr->snprintf = snprintf;
+
+    hostcalls_ptr->audio_open = loader_audio_open;
+    hostcalls_ptr->audio_write = loader_audio_write;
+    hostcalls_ptr->audio_close = loader_audio_close;
 
     servercalls* servercalls_ptr = (servercalls*)((uint8_t*)commpage + EXTENDED_COMMPAGE_SERVERCALLS_OFFSET);
     #define HYCLONE_SERVERCALL0(name) servercalls_ptr->name = loader_hserver_call_##name;

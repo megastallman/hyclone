@@ -127,6 +127,17 @@ struct hostcalls
     void (*at_exit)(int value);
     int (*printf)(const char* format, ...);
     int (*snprintf)(char* buffer, size_t size, const char* format, ...);
+
+    // Audio sink (HyClone virtual hmulti_audio -> host PulseAudio/PipeWire).
+    // The guest-side driver (monika/linux/hmulti_audio.cpp) is freestanding and
+    // cannot link libpulse, so it hands each filled playback buffer to the host
+    // loader through these. audio_open() is idempotent; audio_write() blocks
+    // until the host sink accepts the data (this provides playback pacing);
+    // both return B_OK/negative-error. When no host audio is available these
+    // are NULL and the driver falls back to clock-paced discard.
+    int (*audio_open)(uint32_t rate, uint32_t channels, uint32_t sampleBits);
+    int (*audio_write)(const void* data, size_t size);
+    void (*audio_close)();
 };
 
 // After the real Haiku commpage, we put a page
