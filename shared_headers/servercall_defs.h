@@ -117,3 +117,11 @@ HYCLONE_SERVERCALL3(setgroups, size_t, const int*, intptr_t*)
 HYCLONE_SERVERCALL1(install_default_debugger, int)
 HYCLONE_SERVERCALL2(install_team_debugger, int, int)
 HYCLONE_SERVERCALL3(register_nub, int, int, int)
+// Audio sink: guest hmulti_audio driver -> hyclone_server -> host PulseAudio/
+// PipeWire. audio_write() passes the guest playback buffer (read via
+// process_vm_readv server-side) and blocks until the host sink accepts it,
+// which paces guest playback. Appended last so the servercalls struct only
+// grows at its tail (no commpage offset shift).
+HYCLONE_SERVERCALL3(audio_open, unsigned int, unsigned int, unsigned int)
+HYCLONE_SERVERCALL2(audio_write, const void*, size_t)
+HYCLONE_SERVERCALL0(audio_close)

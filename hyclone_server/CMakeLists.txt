@@ -64,7 +64,7 @@ if(HYCLONE_USE_SANITIZERS)
 endif()
 
 if(HYCLONE_HOST_LINUX)
-    target_link_libraries(hyclone_server PRIVATE pthread)
+    target_link_libraries(hyclone_server PRIVATE pthread dl)
 endif()
 
 install(TARGETS hyclone_server DESTINATION bin)
