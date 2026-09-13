@@ -122,22 +122,53 @@ What was ruled OUT by instrumentation (do not re-chase these):
   (Launch(entry_ref of /boot/system/servers/media_addon_server)). An earlier
   "by-path fixes it" reading was a deploy-confound artifact and is WRONG.
 
-What it IS: a timing-sensitive race in the cross-team connect path. The decisive
-control -- the STOCK addon server dies reliably during the connect, but a rebuilt
-media_addon_server (same libmedia.so, only different -O/instrumentation) reliably
-SURVIVES the same connect across many iterations. So instrumentation perturbs timing
-enough to win the race. The hyclone_server side shows an orderly per-thread teardown
-of the addon team (main thread's connection closes first), with no explicit
-server-issued team-kill -- consistent with the guest process exiting on its own down
-a path the stock build's timing hits and the slower build does not. This is the same
-family as the launch_roster cross-team port race; the fix belongs in HyClone's
-port/thread-disconnect layer, not the media code.
+What it IS: a timing-sensitive death in the media/audio connect path -- and, per a
+full port trace of the connect (2026-09-13, below), NOT a port-layer race. The
+decisive control: the STOCK addon server dies reliably during the connect, but a
+rebuilt media_addon_server (same libmedia.so, only different -O/instrumentation)
+reliably SURVIVES the same connect across many iterations. So instrumentation perturbs
+timing enough to win the race. The stock build exits on its own down a path its
+timing hits and the slower build does not.
 
-Second, independent blocker: even when the addon server SURVIVES (rebuilt binary),
-the connect itself never completes -- the client hangs in the BSoundPlayer
-constructor. So there are two problems on the connect path: (a) the addon-team death
-race, and (b) the connect handshake not completing. Both must be solved before audio
-flows.
+PORT TRACE OF THE CONNECT (definitive, supersedes the "port race" guess above).
+Captured with hyclone_server's signal-armed port trace (SIGUSR1 arm / SIGUSR2 stop,
+env HYCLONE_PORT_TRACE=<file>) around one sptest BSoundPlayer connect that killed the
+addon (team went zombie). 19k port ops in the window. What it shows:
+  - NO B_QUIT_REQUESTED (code 1599165041) is written to ANY port in the whole trace.
+    Nobody tells the addon to quit. Its BApplication looper (main thread, its looper
+    port) sits blocked in port-read the entire time and only unblocks with
+    B_BAD_PORT_ID at teardown -- it never dispatches a quit. This ends the "who quits
+    it" line for good.
+  - EVERY connect port op SUCCEEDS (status=0). The only non-teardown errors are benign
+    timed-out polls on media_server's own port. There is NO B_BAD_PORT_ID / failed
+    cross-team write during the connect. So it is NOT the launch_roster port-race
+    family; the port layer is fine. (Correcting the earlier hypothesis.)
+  - The death is localized: the system mixer's consumer control port receives the
+    CONSUMER_* connect handshake in order -- CONSUMER_GET_NEXT_INPUT (0x301),
+    CONSUMER_DISPOSE_INPUT_COOKIE (0x302), CONSUMER_ACCEPT_FORMAT (0x303),
+    CONSUMER_CONNECTED (0x304) -- and the addon dies while handling CONSUMER_CONNECTED.
+    The connect-handling thread reads 0x304 and then goes silent for ~411 ms (no port
+    ops -- so it is doing non-port work: in-process hmulti_audio ioctls and/or
+    buffer/format setup), after which the whole team is torn down.
+  - No debug_server is invoked at the death (the 160+ debug_server "Failed to create
+    BApplication: Already running" lines are all earlier), which points to a clean
+    exit_group() rather than a routed SIGSEGV. monika/hmulti_audio.cpp contains no
+    exit()/abort()/assert path, so the exit originates in the media_kit/mixer connect
+    path itself, not in our adapter's syscall code.
+
+So the real target is the system mixer's BBufferConsumer::Connected() / node-start
+path inside media_addon_server (which owns both the AudioMixer and our "HyClone
+Virtual Audio" MultiAudioNode), NOT hyclone_server's port code. Next step: instrument
+media_addon_server / the mixer add-on (or add tracing to the MultiAudioNode's
+hmulti_audio buffer/format calls) to catch the exit inside CONSUMER_CONNECTED
+handling -- accepting that instrumentation perturbs the race, so pair it with a way to
+still trigger the death (e.g. a busy-loop delay in the connect thread of the rebuilt
+binary to reproduce stock timing).
+
+Second, independent observation: on the runs where the addon SURVIVES (rebuilt
+binary), sptest still hangs in the BSoundPlayer constructor -- the connect handshake
+does not complete. Whether that is the same underlying bug seen from the other side,
+or a separate one, is open.
 
 Tooling recipe (reusable): the media servers can be built standalone with the Haiku
 cross-compiler at generated.x86_64/cross-tools-x86_64/bin/x86_64-unknown-haiku-g++.

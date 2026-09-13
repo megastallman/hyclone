@@ -14,6 +14,8 @@
 #include "server_workers.h"
 #include "system.h"
 
+#include <atomic>
+#include <csignal>
 #include <cstdarg>
 #include <cstdio>
 #include <ctime>
@@ -22,6 +24,33 @@
 // Env-gated port tracing (set HYCLONE_PORT_TRACE=<path> to enable).
 // Logs the port lifecycle so a hang shows up as an "enter" with no
 // matching "exit"; correlate WRITE(id) against BUFSIZE/MSGINFO/READ(id).
+//
+// Tracing every port op across the whole boot serializes all guests through
+// one mutex + synchronous I/O and can deadlock the boot, so tracing is armed
+// at runtime: it starts DISABLED even when the env var is set, and is toggled
+// with signals -- SIGUSR1 to start, SIGUSR2 to stop -- so only the window of
+// interest (e.g. a BSoundPlayer connect) is captured. The gate is a relaxed
+// atomic checked before the lock, so when disabled the overhead is a single
+// load.
+static std::atomic<bool> gPortTraceEnabled{false};
+
+static void PortTraceSignal(int sig)
+{
+    gPortTraceEnabled.store(sig == SIGUSR1, std::memory_order_relaxed);
+}
+
+// Install the arm/disarm handlers UNCONDITIONALLY in every hyclone_server
+// process (even ones without the trace env), so a broadcast SIGUSR1/SIGUSR2
+// can never fall through to the default action and kill a server. The
+// topology can have several server processes; only the one(s) that opened
+// the trace file below actually emit anything.
+static bool gPortTraceHandlers = []()
+{
+    signal(SIGUSR1, PortTraceSignal);
+    signal(SIGUSR2, PortTraceSignal);
+    return true;
+}();
+
 static FILE* gPortTraceFile = []() -> FILE*
 {
     const char* path = getenv("HYCLONE_PORT_TRACE");
@@ -35,7 +64,7 @@ static FILE* gPortTraceFile = []() -> FILE*
 
 static void PortTrace(const hserver_context& context, const char* fmt, ...)
 {
-    if (gPortTraceFile == NULL)
+    if (gPortTraceFile == NULL || !gPortTraceEnabled.load(std::memory_order_relaxed))
         return;
     static std::mutex sLock;
     std::lock_guard<std::mutex> guard(sLock);
