@@ -320,3 +320,49 @@ connecting in the current post-reboot environment. NEXT STEP: build a TRACE
 media_server_dbg and watch DefaultManager decide whether it finds the physical
 output and whether _ConnectMixerToOutput succeeds or fails silently. The
 servercall sink is ready and will produce sound as soon as buffers flow.
+
+## Update (2026-09-13): connect succeeds, but the output node is never STARTED
+
+Corrects the previous note ("mixer never connected to output"). Built a TRACE
+media_server_dbg with DefaultManager instrumentation (build kit:
+~/ms_dbg_build/, ~/.hprefix/boot/home/media_server_dbg). It shows:
+
+  [DMDBG] _FindPhysical audio-out: GetLiveNodes rv=0 count=0   (repeated -- node
+          not registered yet; DefaultManager keeps rescanning)
+  [DMDBG] audio-out candidate[0]: 'HyClone Virtual Audio' node=3
+  [DMDBG] rescan: fAudioMixer=.. fPhysicalAudioOut=3 fMixerConnected=0
+  [DMDBG] _ConnectMixerToOutput ENTER
+  [DMDBG] _ConnectMixerToOutput RETURN rv=0     <-- SUCCESS
+  [DMDBG] rescan: ... fMixerConnected=1
+
+So DefaultManager DOES find our node (B_PHYSICAL_OUTPUT) once it registers and
+DOES connect the mixer to it (fMixerConnected=1). BMediaRoster::Connect waits
+for the consumer's reply, so MultiAudioNode's consumer Connected() ran too.
+
+Yet the MultiAudioNode's output thread is STILL never spawned (loader-side
+spawn logging catches no "multi_audio audio output" thread), and
+B_MULTI_BUFFER_EXCHANGE (opcode 8038) never fires -- even after a client
+(sptest) connects to the mixer (InitCheck: No error).
+
+Why: for a playback sink, MultiAudioNode::_StartOutputThreadIfNeeded() (which
+spawns the BufferExchange thread) is called ONLY from _HandleStart() -- i.e. on
+a NODE START event -- NOT from the consumer Connected(). The node is started by
+the system mixer's auto-start: AudioMixer::Connected() does, on the first input,
+roster->StartNode(physicalOutput). An instrumented mixer earlier confirmed that
+StartNode IS called and returns. So the chain
+  sptest -> mixer input -> AudioMixer::Connected (fAutoStop, CountInputs==1)
+    -> StartNode(MultiAudioNode) -> NODE_START -> _HandleStart
+      -> _StartOutputThreadIfNeeded -> output thread -> BUFFER_EXCHANGE
+breaks at the MultiAudioNode end: it receives NODE_START but never runs
+_HandleStart (the node is never actually started).
+
+NEXT STEP: find why NODE_START does not start the MultiAudioNode. Either
+port-trace the MultiAudioNode's node control port during the sptest connect to
+see whether NODE_START is delivered and read, or get an instrumented
+hmulti_audio.media_addon to be the instantiated node (the non-packaged override
+loads but the system add-on's node is the one DefaultManager picks -- node ids;
+would need to shadow the system add-on rather than duplicate it) and log
+_HandleStart / the node's event loop. NB media_kit start goes through the node's
+BMediaEventLooper (HandleEvent/BTimedEventQueue) -- suspect the timed START
+event is queued for a performance_time that never arrives because the node's
+time source / RunMode isn't advancing under HyClone.
