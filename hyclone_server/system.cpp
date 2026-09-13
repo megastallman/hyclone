@@ -12,6 +12,7 @@
 #include "hsemaphore.h"
 #include "port.h"
 #include "process.h"
+#include "server_audio.h"
 #include "server_native.h"
 #include "server_servercalls.h"
 #include "server_systemnotification.h"
@@ -516,6 +517,13 @@ intptr_t server_hserver_call_disconnect(hserver_context& context)
         // Will silently fail if the process is not the registered
         // message server.
         msgService.UnregisterService(context.process);
+    }
+
+    if (processEnded)
+    {
+        // Release any host audio stream the process left open. Done outside the
+        // system lock because freeing a PulseAudio stream may block briefly.
+        server_audio_cleanup(context.pid);
     }
 
     for (const auto& event: teamNotificationEvents)

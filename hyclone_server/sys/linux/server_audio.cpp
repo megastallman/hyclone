@@ -25,6 +25,7 @@
 
 #include "haiku_errors.h"
 #include "process.h"
+#include "server_audio.h"
 #include "server_servercalls.h"
 
 namespace {
@@ -68,15 +69,22 @@ bool LoadSymbols()
     return sAvailable;
 }
 
-void CloseLocked(int pid)
+void CloseLocked(int pid, bool drain)
 {
     auto it = sStreams.find(pid);
     if (it == sStreams.end())
         return;
     if (it->second != nullptr)
     {
-        int error = 0;
-        sDrain(it->second, &error);
+        // Draining blocks until the sink has played out the queued audio, which
+        // is only wanted for an orderly audio_close(). On a dead sink or a dead
+        // guest process there is nothing meaningful to play out (and draining
+        // would block), so just free the stream.
+        if (drain)
+        {
+            int error = 0;
+            sDrain(it->second, &error);
+        }
         sFree(it->second);
     }
     sStreams.erase(it);
@@ -166,7 +174,7 @@ intptr_t server_hserver_call_audio_write(hserver_context& context,
     if (sWrite(stream, data.data(), size, &error) < 0)
     {
         std::lock_guard<std::mutex> guard(sLock);
-        CloseLocked(context.pid);
+        CloseLocked(context.pid, false);   // sink died: nothing to drain
         return B_IO_ERROR;
     }
     return B_OK;
@@ -175,7 +183,7 @@ intptr_t server_hserver_call_audio_write(hserver_context& context,
 intptr_t server_hserver_call_audio_close(hserver_context& context)
 {
     std::lock_guard<std::mutex> guard(sLock);
-    CloseLocked(context.pid);
+    CloseLocked(context.pid, true);        // orderly stop: play out queued audio
     return B_OK;
 }
 
@@ -185,5 +193,5 @@ void server_audio_cleanup(int pid)
 {
     std::lock_guard<std::mutex> guard(sLock);
     if (sAvailable)
-        CloseLocked(pid);
+        CloseLocked(pid, false);           // guest is gone: nothing to drain
 }

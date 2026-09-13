@@ -274,10 +274,17 @@ buffers flow until the mixer connects to the node.
 2. HmultiAudioDevice in hyclone_server: implement the ioctls above with a shared
    buffer area; first ship a NULL sink that paces via a monotonic timer and
    discards PCM. Milestone: cmus/ocp play end-to-end (silently). Fully testable.
-3. Swap the null sink for a PipeWire playback stream (link libpipewire-0.3 into
-   hyclone_server; a pw_stream in a pw_thread_loop; on process, copy the next
-   guest buffer; unblock BUFFER_EXCHANGE from the PipeWire on-process callback).
+3. DONE (via PulseAudio simple API, not libpipewire directly): the null sink is
+   replaced by a per-guest pa_simple playback stream in hyclone_server
+   (server_audio.cpp), fed by audio_open/audio_write/audio_close servercalls the
+   guest's B_MULTI_BUFFER_EXCHANGE drives. pa_simple_write() blocks, which paces
+   the guest, so BUFFER_EXCHANGE needs no separate clock. Reaches pipewire-pulse
+   under a PipeWire desktop. Unblocked once the B_ABSOLUTE_TIMEOUT port bug was
+   fixed (see the RESOLVED section above).
 4. Format/rate handling, latency reporting, xrun handling; optional record.
+   Currently the device advertises a single fixed format (48 kHz / 2ch / 16-bit)
+   and the mixer resamples everything to it; per-app rate negotiation and record
+   are still open.
 
 ## Related blockers (separate from audio)
 
@@ -366,3 +373,61 @@ _HandleStart / the node's event loop. NB media_kit start goes through the node's
 BMediaEventLooper (HandleEvent/BTimedEventQueue) -- suspect the timed START
 event is queued for a performance_time that never arrives because the node's
 time source / RunMode isn't advancing under HyClone.
+
+## *** RESOLVED (2026-09-13): audio flows end-to-end to PipeWire ***
+
+The "node receives NODE_START but never starts" symptom above was NOT a
+time-source / RunMode problem. Root cause, found by building an instrumented
+libmedia.so (BMediaEventLooper::ControlLoop + BTimeSource logging) and then a
+server-side trace of every port read:
+
+  **hyclone_server's port servercalls ignored B_ABSOLUTE_TIMEOUT.**
+
+`server_hserver_call_read_port_etc` (and write / buffer_size / message_info)
+decided whether to wait with `useTimeout = flags & B_TIMEOUT`. B_TIMEOUT (0x8)
+is only the *relative*-timeout flag; B_ABSOLUTE_TIMEOUT is 0x10. So any port op
+issued with an absolute deadline was treated as having no timeout and passed
+B_INFINITE_TIMEOUT to Port::Read -> it blocked forever instead of returning
+B_TIMED_OUT at the deadline.
+
+BMediaEventLooper::ControlLoop dispatches a node's timed events (B_START,
+buffer handling, ...) precisely by reading its control port with
+B_ABSOLUTE_TIMEOUT and treating B_TIMED_OUT as "the event's time has come".
+Because that read never timed out, the node received NODE_START, queued the
+B_START event, and then blocked forever without ever dispatching it. Every
+media node (AudioMixer, MultiAudioNode) hung the same way -- so no BUFFER_EXCHANGE
+ever ran and no buffers reached the sink. sptest connected ("InitCheck: No
+error") but nothing played.
+
+Fix (now on master): `server_relative_timeout(flags, timeout)` in
+hyclone_server/server_time.h converts an absolute deadline to the relative wait
+Port::Read/Write expect (or infinite when no timeout flag is set); all four port
+servercalls route through it. Because bigtime_t is UNSIGNED in HyClone, the
+conversion compares before subtracting (`if (timeout <= now) return 0;`) so an
+already-elapsed deadline yields a non-blocking poll rather than wrapping to a
+near-infinite value; an elapsed absolute deadline is normalized to B_TIMED_OUT.
+Committed separately as "fix: honor B_ABSOLUTE_TIMEOUT in port read/write
+servercalls" -- it is a general correctness fix, not audio-specific.
+
+With that fix the whole chain runs:
+  sptest (BSoundPlayer) -> System Mixer -> MultiAudioNode (NODE_START now
+  dispatches -> _HandleStart -> output thread) -> B_MULTI_BUFFER_EXCHANGE (8038)
+  -> audio_open/audio_write servercalls -> pa_simple -> PipeWire.
+
+Verified: a live PipeWire sink-input (s16le 2ch 48000Hz, client "hyclone_server")
+appears during playback. 300+ ControlLoop dispatches and 100+ buffer exchanges
+per short clip.
+
+Two supporting pieces landed on the audio-sink branch:
+- server_audio.cpp reaches pipewire-pulse out of the box: when neither
+  PULSE_SERVER nor XDG_RUNTIME_DIR is in the (haiku_loader-forked) server's
+  environment, it constructs unix:/run/user/<uid>/pulse/native itself.
+- Streams are released on teardown: server_audio_cleanup(pid) is called from the
+  connection-teardown path (system.cpp) so a media_addon_server that dies without
+  audio_close does not leak its host stream. An orderly audio_close() drains; a
+  dead sink or dead guest frees without draining (draining would block).
+
+Debug scaffolding used to find this (all reverted afterwards): a full instrumented
+libmedia.so build (build script + notes were in the session scratchpad), a
+fixed-file server-side read trace in port.cpp, and pa_strerror logging in
+server_audio.cpp. The stock libmedia.so is restored in the prefix.
