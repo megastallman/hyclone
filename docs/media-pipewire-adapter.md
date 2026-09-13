@@ -165,6 +165,47 @@ handling -- accepting that instrumentation perturbs the race, so pair it with a 
 still trigger the death (e.g. a busy-loop delay in the connect thread of the rebuilt
 binary to reproduce stock timing).
 
+SOURCE-LEVEL LOCALIZATION (2026-09-13). Read AudioMixer::Connected()
+(src/add-ons/media/media-add-ons/mixer/AudioMixer.cpp:390). On the FIRST input only
+(`if (fAutoStop && fCore->CountInputs() == 1)`) -- which is exactly the first client
+connecting -- it starts the destination node and blocks waiting for it:
+    roster->StartNode(output=HyClone Virtual Audio / MultiAudioNode, startLatency);
+    // then a up-to-1-second wait loop on TimeSource()->GetTime(), snooze(100)
+    fCore->Start();
+That StartNode + wait loop is the ~411 ms silent gap the port trace showed. So the
+death is inside starting our MultiAudioNode and/or fCore->Start(), on the first
+connect.
+
+Death mode nailed down: it is a SILENT clean exit_group. Ruled out, each with
+evidence: not a SIGSEGV (no dmesg segfault; HyClone installs no SIGSEGV handler that
+could swallow one -- only SIGREQUEST); not a debugger()/assert (HyClone's
+_moni_debugger writes "_kern_debugger: <msg>" via raw write(2) before exit_group and
+no such line appears); not a C++ abort/terminate/pure-virtual/stack-smash (none of
+those messages appear on the addon's stderr, which is captured -- the addon inherits
+media_server's fd 1/2); not B_QUIT. So some code on the StartNode/Start path calls
+exit()/_exit() (or exit_group directly) with no output.
+
+Corroboration: after a few of these deaths, media_server itself stops staying up
+across restarts -- consistent with DefaultManager auto-connecting the mixer to the
+output on startup (from saved Media state) and hitting the same Connected() path. So
+the crash fires on ANY connect into the mixer, not only sptest's.
+
+Precise next step (blocked only by env, see below): checkpoint AudioMixer::Connected()
+around StartNode / the wait loop / fCore->Start() -- either build an instrumented
+mixer add-on and load it from the writable user add-on dir
+(/boot/home/config/non-packaged/add-ons/media/), or sudo strace -f the addon host
+process across the connect (ptrace works; strace 6.19 present) to see the exact
+exit_group and the last syscall before it. Instrumentation perturbs the race (the
+addon then survives), so pair it with a small delay in the connect path to keep stock
+timing.
+
+ENV NOTE: after many repeated boots+crashes in one session the prefix degrades --
+media_server begins exiting on startup even with Media settings cleared, and the
+per-guest server topology gets unstable. A clean VM reboot (which also resets the two
+AppArmor sysctls to 1; HyClone only needs the file caps, so that is fine) gives the
+cleanest slate; remember hyclone_server loses its file caps on every rebuild and needs
+`sudo setcap cap_sys_ptrace,cap_sys_nice,cap_sys_admin+eip build/bin/hyclone_server`.
+
 Second, independent observation: on the runs where the addon SURVIVES (rebuilt
 binary), sptest still hangs in the BSoundPlayer constructor -- the connect handshake
 does not complete. Whether that is the same underlying bug seen from the other side,
