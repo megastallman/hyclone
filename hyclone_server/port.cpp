@@ -521,11 +521,14 @@ intptr_t server_hserver_call_port_buffer_size_etc(hserver_context& context, port
     }
 
     haiku_port_message_info messageInfo;
-    bool useTimeout = flags & B_TIMEOUT;
+    bigtime_t relativeTimeout = server_relative_timeout(flags, timeout);
 
     PortTrace(context, "BUFSIZE-enter id=%d queue=%d timeout=%s", id,
-        port->GetInfo().queue_count, useTimeout ? "yes" : "INFINITE");
-    status_t status = port->GetMessageInfo(messageInfo, useTimeout ? timeout : B_INFINITE_TIMEOUT);
+        port->GetInfo().queue_count,
+        relativeTimeout == B_INFINITE_TIMEOUT ? "INFINITE" : "yes");
+    status_t status = port->GetMessageInfo(messageInfo, relativeTimeout);
+    if (status == B_WOULD_BLOCK && (flags & B_ABSOLUTE_TIMEOUT))
+        status = B_TIMED_OUT;
     PortTrace(context, "BUFSIZE-exit  id=%d -> status=%d size=%d", id, (int)status,
         status == B_OK ? (int)messageInfo.size : -1);
 
@@ -621,9 +624,11 @@ intptr_t server_hserver_call_write_port_etc(hserver_context& context, port_id id
         return B_BAD_ADDRESS;
     }
 
-    bool useTimeout = flags & B_TIMEOUT;
+    bigtime_t relativeTimeout = server_relative_timeout(flags, timeout);
 
-    status_t writeStatus = port->Write(std::move(message), useTimeout ? timeout : B_INFINITE_TIMEOUT);
+    status_t writeStatus = port->Write(std::move(message), relativeTimeout);
+    if (writeStatus == B_WOULD_BLOCK && (flags & B_ABSOLUTE_TIMEOUT))
+        writeStatus = B_TIMED_OUT;
     PortTrace(context, "WRITE id=%d code=%d size=%zu -> status=%d queue=%d",
         id, messageCode, bufferSize, (int)writeStatus, port->GetInfo().queue_count);
     return writeStatus;
@@ -648,10 +653,13 @@ intptr_t server_hserver_call_read_port_etc(hserver_context& context,
 
     Port::Message message;
 
-    bool useTimeout = flags & B_TIMEOUT;
+    bigtime_t relativeTimeout = server_relative_timeout(flags, timeout);
 
     PortTrace(context, "READ-enter id=%d queue=%d", id, port->GetInfo().queue_count);
-    status_t status = port->Read(message, useTimeout ? timeout : B_INFINITE_TIMEOUT);
+    status_t status = port->Read(message, relativeTimeout);
+    // Haiku reports an elapsed absolute deadline as B_TIMED_OUT, not B_WOULD_BLOCK.
+    if (status == B_WOULD_BLOCK && (flags & B_ABSOLUTE_TIMEOUT))
+        status = B_TIMED_OUT;
     PortTrace(context, "READ-exit  id=%d code=%d -> status=%d", id, message.code, (int)status);
 
     if (status != B_OK)
@@ -695,11 +703,14 @@ intptr_t server_hserver_call_get_port_message_info_etc(hserver_context& context,
     }
 
     haiku_port_message_info messageInfo;
-    bool useTimeout = flags & B_TIMEOUT;
+    bigtime_t relativeTimeout = server_relative_timeout(flags, timeout);
 
     PortTrace(context, "MSGINFO-enter id=%d queue=%d timeout=%s", id,
-        port->GetInfo().queue_count, useTimeout ? "yes" : "INFINITE");
-    status_t status = port->GetMessageInfo(messageInfo, useTimeout ? timeout : B_INFINITE_TIMEOUT);
+        port->GetInfo().queue_count,
+        relativeTimeout == B_INFINITE_TIMEOUT ? "INFINITE" : "yes");
+    status_t status = port->GetMessageInfo(messageInfo, relativeTimeout);
+    if (status == B_WOULD_BLOCK && (flags & B_ABSOLUTE_TIMEOUT))
+        status = B_TIMED_OUT;
     PortTrace(context, "MSGINFO-exit  id=%d -> status=%d size=%d", id, (int)status,
         status == B_OK ? (int)messageInfo.size : -1);
 
