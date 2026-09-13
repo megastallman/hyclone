@@ -287,3 +287,36 @@ buffers flow until the mixer connects to the node.
   cmus can still run interactively without it. Fix is independent of audio.
 - app_server remote-display backpressure (port 10900) can hang BApplications
   when no viewer drains it; keep a viewer connected during testing.
+
+## BUFFER_EXCHANGE gap (2026-09-13): output node never pumps
+
+Even with the connect crash fixed and the sink (servercall) in place, no audio
+flows. Traced it end to end (per-ioctl logging in monika hmulti_audio; loader
+spawn_thread logging; an instrumented mixer and multi_audio add-on in
+$HPREFIX/boot/home/config/non-packaged/add-ons/media/):
+
+- The virtual device IS created and probed: monika sees GET_DESCRIPTION,
+  GET/SET_ENABLED_CHANNELS, GET/SET_GLOBAL_FORMAT, LIST_MIX_CONTROLS,
+  GET_BUFFERS (opcodes 8020..8035) -- all at MultiAudioNode/MultiAudioDevice
+  *creation* time. The node advertises kinds 0x2000f, i.e. B_PHYSICAL_OUTPUT.
+- But B_MULTI_BUFFER_EXCHANGE (8038) is NEVER issued, and the loader NEVER
+  spawns a "multi_audio audio output" thread. That thread is created only in
+  MultiAudioNode::_StartOutputThreadIfNeeded(), which is called only from
+  MultiAudioNode::Connected() (src/add-ons/media/media-add-ons/multi_audio/
+  MultiAudioNode.cpp). GET_BUFFERS comes from MultiAudioDevice::_GetBuffers()
+  at init, NOT from Connected().
+
+Conclusion: MultiAudioNode::Connected() never runs -> the system mixer is never
+connected to our MultiAudioNode (the physical output) -> the output node's
+BufferExchange loop never starts -> no buffer ever reaches the sink. A client's
+BSoundPlayer still connects to the mixer (InitCheck: No error), but the mixer's
+output goes nowhere.
+
+So the missing link is the mixer->MultiAudioNode connection, established by
+media_server's DefaultManager (_RescanThread -> _FindPhysical /
+_ConnectMixerToOutput). Older traces (a TRACE media_server_dbg) once logged
+"Default physical audio output ... created!", so it can work; it is not
+connecting in the current post-reboot environment. NEXT STEP: build a TRACE
+media_server_dbg and watch DefaultManager decide whether it finds the physical
+output and whether _ConnectMixerToOutput succeeds or fails silently. The
+servercall sink is ready and will produce sound as soon as buffers flow.
