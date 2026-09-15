@@ -148,6 +148,13 @@ status_t Port::Read(Message& message, bigtime_t timeout)
 
     if (_info.queue_count == 0)
     {
+        // A closed port with nothing left to drain fails immediately, and a
+        // reader that blocks here must be woken by Close() (see readableOrDead
+        // and Port::Close), otherwise close_port() cannot unblock it.
+        if (_closed)
+        {
+            return B_BAD_PORT_ID;
+        }
         if (timeout == 0)
         {
             return B_WOULD_BLOCK;
@@ -157,7 +164,7 @@ status_t Port::Read(Message& message, bigtime_t timeout)
         {
             const auto readableOrDead = [&]()
             {
-                return !_registered || _info.queue_count > 0;
+                return !_registered || _closed || _info.queue_count > 0;
             };
 
             if (!server_is_infinite_timeout(timeout))
@@ -179,7 +186,7 @@ status_t Port::Read(Message& message, bigtime_t timeout)
 
     if (_info.queue_count == 0)
     {
-        return B_TIMED_OUT;
+        return _closed ? B_BAD_PORT_ID : B_TIMED_OUT;
     }
 
     --_info.queue_count;
@@ -199,6 +206,10 @@ status_t Port::GetMessageInfo(haiku_port_message_info& info, bigtime_t timeout)
 
     if (_info.queue_count == 0)
     {
+        if (_closed)
+        {
+            return B_BAD_PORT_ID;
+        }
         if (timeout == 0)
         {
             return B_WOULD_BLOCK;
@@ -208,7 +219,7 @@ status_t Port::GetMessageInfo(haiku_port_message_info& info, bigtime_t timeout)
         {
             const auto readableOrDead = [&]()
             {
-                return !_registered || _info.queue_count > 0;
+                return !_registered || _closed || _info.queue_count > 0;
             };
 
             if (!server_is_infinite_timeout(timeout))
@@ -230,7 +241,7 @@ status_t Port::GetMessageInfo(haiku_port_message_info& info, bigtime_t timeout)
 
     if (_info.queue_count == 0)
     {
-        return B_TIMED_OUT;
+        return _closed ? B_BAD_PORT_ID : B_TIMED_OUT;
     }
 
     info = _messages.front().info;
@@ -249,7 +260,12 @@ status_t Port::Close()
     }
 
     _closed = true;
+    // Wake writers (they fail) AND readers: a thread blocked in read_port /
+    // get_port_message_info must return B_BAD_PORT_ID once the port is closed,
+    // which is what lets close_port() unblock e.g. a BMediaEventLooper control
+    // thread so BMediaEventLooper::Quit() can join it.
     _writeCondVar.notify_all();
+    _readCondVar.notify_all();
     return B_OK;
 }
 
