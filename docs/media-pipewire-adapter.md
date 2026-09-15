@@ -429,3 +429,53 @@ Two related fixes landed while getting cmus this far:
   devpSDL2/devpSDL, not devpSDL3), so ocp falls through to devpNone (silent).
   Set `playerdevices=devpSDL3` in ~/config/settings/ocp/ocp.ini to use the SDL3
   output that reaches BSoundPlayer.
+
+## Gotcha (2026-09-15): media_server never auto-starts under HyClone
+
+After the fixes above, a *fresh* guest session still failed the moment an app
+tried to play: cmus reported `Error: opening audio device: No such device` and
+its curses UI filled with the harmless `QueryPort ... Bad port ID` noise, which
+looks like a crash but is not -- cmus stays alive. The real problem is that
+`media_server` (and therefore media_addon_server / AudioMixer / the whole node
+graph) was not running, so BSoundPlayer had no audio node to open.
+
+Root cause: media_server's launch job in `/system/data/launch/system` is gated on
+`on initial_volumes_mounted`:
+
+    service x-vnd.Haiku-media_server {
+        launch /system/servers/media_server
+        no_safemode
+        legacy
+        on initial_volumes_mounted
+    }
+
+That event is emitted by the guest launch_daemon once the initial volume set is
+mounted, and it never fires under HyClone. media_server is the only service gated
+on it, which is exactly why it was the only expected server missing from `ps`
+(net_server and midi_server are absent by design -- HyClone uses host networking,
+and midi/print are on_demand). `launch_roster start x-vnd.Haiku-media_server`
+does not help either: the job lives in the *system* session, so a user-session
+`launch_roster` returns "Name not found".
+
+Once media_server is started by hand it launches media_addon_server itself and
+everything works: cmus/ocp play end-to-end with a live PipeWire sink-input. So
+this is purely a startup-trigger gap, not an adapter or node bug.
+
+Workaround (per-session, in the guest): start it from the personal profile.
+Two Haiku/HyClone specifics matter here -- Haiku's bash is patched to source
+`~/config/settings/profile` (not `~/.profile`), and this guest ships no `grep`,
+so the "already running?" guard must use bash builtins:
+
+    # ~/config/settings/profile
+    if [[ "$(/system/bin/ps 2>/dev/null)" != *"servers/media_server"* ]]; then
+        nohup /system/servers/media_server >/dev/null 2>&1 &
+        disown 2>/dev/null
+    fi
+
+The guard is idempotent: the first login shell starts exactly one media_server,
+later shells start none. (The same profile is the natural home for the cmus
+`XDG_RUNTIME_DIR` workaround: `alias cmus='env -u XDG_RUNTIME_DIR cmus'`.)
+
+Proper fix (not yet done): make HyClone emit `initial_volumes_mounted` so the
+guest launch_daemon starts media_server natively the way it does on real Haiku,
+instead of relying on the per-session profile workaround.
