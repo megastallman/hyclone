@@ -430,7 +430,7 @@ Two related fixes landed while getting cmus this far:
   Set `playerdevices=devpSDL3` in ~/config/settings/ocp/ocp.ini to use the SDL3
   output that reaches BSoundPlayer.
 
-## Gotcha (2026-09-15): media_server never auto-starts under HyClone
+## *** RESOLVED (2026-09-15): media_server was disabled by a stale HyClone override ***
 
 After the fixes above, a *fresh* guest session still failed the moment an app
 tried to play: cmus reported `Error: opening audio device: No such device` and
@@ -439,43 +439,45 @@ looks like a crash but is not -- cmus stays alive. The real problem is that
 `media_server` (and therefore media_addon_server / AudioMixer / the whole node
 graph) was not running, so BSoundPlayer had no audio node to open.
 
-Root cause: media_server's launch job in `/system/data/launch/system` is gated on
-`on initial_volumes_mounted`:
+The first guess (that the `on initial_volumes_mounted` event never fires under
+HyClone) was WRONG. The launch_daemon event log (`launch_roster log`) shows the
+event working exactly as on real Haiku:
 
-    service x-vnd.Haiku-media_server {
-        launch /system/servers/media_server
-        no_safemode
-        legacy
-        on initial_volumes_mounted
-    }
+    External event registered: "initial_volumes_mounted"
+    External event triggered:  "initial_volumes_mounted"
+    Event triggered "x-vnd.be-trak" / "x-vnd.be-tskb" / ...
 
-That event is emitted by the guest launch_daemon once the initial volume set is
-mounted, and it never fires under HyClone. media_server is the only service gated
-on it, which is exactly why it was the only expected server missing from `ps`
-(net_server and midi_server are absent by design -- HyClone uses host networking,
-and midi/print are on_demand). `launch_roster start x-vnd.Haiku-media_server`
-does not help either: the job lives in the *system* session, so a user-session
-`launch_roster` returns "Name not found".
+mount_server (AutoMounter::ReadyToRun) fires `BLaunchRoster::NotifyEvent` right
+after its initial (no-op, since HyClone manages no disk devices) volume scan, and
+the daemon triggers every gated job. `getuid()` returns 0 in the guest, so the
+system-daemon `user == 0` path registers and triggers correctly.
 
-Once media_server is started by hand it launches media_addon_server itself and
-everything works: cmus/ocp play end-to-end with a live PipeWire sink-input. So
-this is purely a startup-trigger gap, not an adapter or node bug.
+Actual root cause: HyClone ships a launch override, `data/launch/hyclone`
+(deployed to `/boot/system/non-packaged/data/launch/hyclone`), that explicitly
+disabled media_server:
 
-Workaround (per-session, in the guest): start it from the personal profile.
-Two Haiku/HyClone specifics matter here -- Haiku's bash is patched to source
-`~/config/settings/profile` (not `~/.profile`), and this guest ships no `grep`,
-so the "already running?" guard must use bash builtins:
+    # media_server requires media_addon_server, which for some
+    # reason is not started automatically
+    service x-vnd.Haiku-media_server { disabled true }
 
-    # ~/config/settings/profile
-    if [[ "$(/system/bin/ps 2>/dev/null)" != *"servers/media_server"* ]]; then
-        nohup /system/servers/media_server >/dev/null 2>&1 &
-        disown 2>/dev/null
-    fi
+`disabled true` makes `Job::IsEnabled()` false, so the launch_daemon drops the
+job during `_InitJobs` with `B_NO_INIT` -- logged as `Ignored job
+"x-vnd.haiku-media_server" due Initialization failed`, *before* the event fires.
+It was added in 2023 (bf68ae0, "Disable faulty servers") back when the media
+stack didn't work under HyClone and the daemon would respawn media_server in a
+zombie-leaking loop. All the fixes in this doc removed that failure, so the
+override was stale -- and its stated reason is now false: starting media_server
+DOES bring up media_addon_server itself (verified repeatedly).
 
-The guard is idempotent: the first login shell starts exactly one media_server,
-later shells start none. (The same profile is the natural home for the cmus
-`XDG_RUNTIME_DIR` workaround: `alias cmus='env -u XDG_RUNTIME_DIR cmus'`.)
+Fix: remove the media_server stanza from `data/launch/hyclone` (net_server stays
+disabled -- it genuinely needs unsupported AF_LINK). Re-deploy the file into the
+prefix (build_hprefix.sh copies `data/launch` to
+`$HPREFIX/boot/system/non-packaged/data/launch`) and reboot the guest. media_server
+then initializes, registers `on initial_volumes_mounted`, and mount_server's event
+launches it -- and media_addon_server with it -- natively at boot, no per-session
+workaround needed.
 
-Proper fix (not yet done): make HyClone emit `initial_volumes_mounted` so the
-guest launch_daemon starts media_server natively the way it does on real Haiku,
-instead of relying on the per-session profile workaround.
+The remaining guest-side helper lives in `~/config/settings/profile` (Haiku's
+bash is patched to source that, not `~/.profile`): the cmus XDG_RUNTIME_DIR
+workaround, `alias cmus='env -u XDG_RUNTIME_DIR cmus'` (see the AF_UNIX note
+above for why).
