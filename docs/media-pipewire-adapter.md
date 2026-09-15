@@ -328,58 +328,15 @@ media_server_dbg and watch DefaultManager decide whether it finds the physical
 output and whether _ConnectMixerToOutput succeeds or fails silently. The
 servercall sink is ready and will produce sound as soon as buffers flow.
 
-## Update (2026-09-13): connect succeeds, but the output node is never STARTED
-
-Corrects the previous note ("mixer never connected to output"). Built a TRACE
-media_server_dbg with DefaultManager instrumentation (build kit:
-~/ms_dbg_build/, ~/.hprefix/boot/home/media_server_dbg). It shows:
-
-  [DMDBG] _FindPhysical audio-out: GetLiveNodes rv=0 count=0   (repeated -- node
-          not registered yet; DefaultManager keeps rescanning)
-  [DMDBG] audio-out candidate[0]: 'HyClone Virtual Audio' node=3
-  [DMDBG] rescan: fAudioMixer=.. fPhysicalAudioOut=3 fMixerConnected=0
-  [DMDBG] _ConnectMixerToOutput ENTER
-  [DMDBG] _ConnectMixerToOutput RETURN rv=0     <-- SUCCESS
-  [DMDBG] rescan: ... fMixerConnected=1
-
-So DefaultManager DOES find our node (B_PHYSICAL_OUTPUT) once it registers and
-DOES connect the mixer to it (fMixerConnected=1). BMediaRoster::Connect waits
-for the consumer's reply, so MultiAudioNode's consumer Connected() ran too.
-
-Yet the MultiAudioNode's output thread is STILL never spawned (loader-side
-spawn logging catches no "multi_audio audio output" thread), and
-B_MULTI_BUFFER_EXCHANGE (opcode 8038) never fires -- even after a client
-(sptest) connects to the mixer (InitCheck: No error).
-
-Why: for a playback sink, MultiAudioNode::_StartOutputThreadIfNeeded() (which
-spawns the BufferExchange thread) is called ONLY from _HandleStart() -- i.e. on
-a NODE START event -- NOT from the consumer Connected(). The node is started by
-the system mixer's auto-start: AudioMixer::Connected() does, on the first input,
-roster->StartNode(physicalOutput). An instrumented mixer earlier confirmed that
-StartNode IS called and returns. So the chain
-  sptest -> mixer input -> AudioMixer::Connected (fAutoStop, CountInputs==1)
-    -> StartNode(MultiAudioNode) -> NODE_START -> _HandleStart
-      -> _StartOutputThreadIfNeeded -> output thread -> BUFFER_EXCHANGE
-breaks at the MultiAudioNode end: it receives NODE_START but never runs
-_HandleStart (the node is never actually started).
-
-NEXT STEP: find why NODE_START does not start the MultiAudioNode. Either
-port-trace the MultiAudioNode's node control port during the sptest connect to
-see whether NODE_START is delivered and read, or get an instrumented
-hmulti_audio.media_addon to be the instantiated node (the non-packaged override
-loads but the system add-on's node is the one DefaultManager picks -- node ids;
-would need to shadow the system add-on rather than duplicate it) and log
-_HandleStart / the node's event loop. NB media_kit start goes through the node's
-BMediaEventLooper (HandleEvent/BTimedEventQueue) -- suspect the timed START
-event is queued for a performance_time that never arrives because the node's
-time source / RunMode isn't advancing under HyClone.
-
 ## *** RESOLVED (2026-09-13): audio flows end-to-end to PipeWire ***
 
-The "node receives NODE_START but never starts" symptom above was NOT a
-time-source / RunMode problem. Root cause, found by building an instrumented
-libmedia.so (BMediaEventLooper::ControlLoop + BTimeSource logging) and then a
-server-side trace of every port read:
+Background: DefaultManager does connect the mixer to our node (fMixerConnected=1)
+and the consumer Connected() runs, but the MultiAudioNode's output thread was
+never spawned and B_MULTI_BUFFER_EXCHANGE (opcode 8038) never fired -- the node
+received NODE_START but never ran _HandleStart, so it never actually started.
+That was NOT a time-source / RunMode problem. Root cause, found by building an
+instrumented libmedia.so (BMediaEventLooper::ControlLoop + BTimeSource logging)
+and then a server-side trace of every port read:
 
   **hyclone_server's port servercalls ignored B_ABSOLUTE_TIMEOUT.**
 
@@ -431,3 +388,44 @@ Debug scaffolding used to find this (all reverted afterwards): a full instrument
 libmedia.so build (build script + notes were in the session scratchpad), a
 fixed-file server-side read trace in port.cpp, and pa_strerror logging in
 server_audio.cpp. The stock libmedia.so is restored in the prefix.
+
+## *** RESOLVED (2026-09-15): real apps (cmus, ocp) play end-to-end ***
+
+The sink above worked for sptest, but cmus and ocp still hung. Root cause: a
+close_port() bug in hyclone_server's Port. BSoundPlayer's destructor calls
+BMediaEventLooper::Quit(), which does close_port(ControlPort()) and then
+wait_for_thread() to join the node's control-loop thread. That thread sits in
+read_port() on its control port. Port::Close() only woke writers (never
+_readCondVar) and the read/get-message-info predicate ignored _closed, so the
+close never woke the reader -- it never returned B_BAD_PORT_ID, never exited,
+and the join hung forever, wedging the whole media stack. It hit cmus/ocp during
+audio-output setup (a BSoundPlayer probe/teardown) and sptest in its teardown.
+
+Found with guest-symbol gdb: host gdb only symbolizes the loader frames, so the
+BMediaRoster frames showed as ??. Loading the guest images at their runtime
+bases (add-symbol-file libroot.so/libmedia.so/libbe.so -o <base from
+/proc/PID/maps>) resolved the stuck main-thread stack to
+  BSoundPlayer::~BSoundPlayer() -> BMediaNode::Release()
+    -> BMediaEventLooper::DeleteHook() -> BMediaEventLooper::Quit()
+      -> wait_for_thread() [blocked join].
+
+Fix: Port::Close() now also does _readCondVar.notify_all(); Read/GetMessageInfo
+wake on _closed and return B_BAD_PORT_ID on a closed-and-empty port -- matching
+Haiku's close_port() semantics. Committed as "fix: close_port() must unblock
+threads reading the port".
+
+Verified end-to-end, each producing a live PipeWire sink-input (s16le 2ch 48000Hz):
+- cmus  (libao -> libhaiku -> media_kit): status playing, position advances.
+- ocp   (SDL3 -> Haiku audio -> media_kit): auto-plays on open.
+- sptest now tears down cleanly instead of hanging.
+
+Two related fixes landed while getting cmus this far:
+- AF_UNIX bind rejected a not-yet-existing socket path -- vchroot_expandat
+  returns B_ENTRY_NOT_FOUND for a path bind() is about to create, and monika
+  treated that as failure (ENOSYS). cmus could not create its control socket
+  ("bind: Function not implemented") and would not start. Committed as
+  "fix: allow AF_UNIX bind to a not-yet-existing socket path".
+- ocp config note: its stock ocp.ini `playerdevices` list predates SDL3 (it lists
+  devpSDL2/devpSDL, not devpSDL3), so ocp falls through to devpNone (silent).
+  Set `playerdevices=devpSDL3` in ~/config/settings/ocp/ocp.ini to use the SDL3
+  output that reaches BSoundPlayer.
